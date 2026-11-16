@@ -1,0 +1,6 @@
+{
+  "name": "Bhagwati Publications",
+  "description": "Official publishing storefront, book catalog, sample reader, and owner management portal for Bhagwati Publications.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
