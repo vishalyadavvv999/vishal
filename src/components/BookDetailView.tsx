@@ -8,17 +8,19 @@ import {
   Minus,
   Plus,
   ShoppingBag,
+  Star,
   Zap,
 } from 'lucide-react';
 import type { Book, CurrencyCode, CustomerUser } from '../types';
 import { formatPrice } from '../lib/currency';
+import { LanguageToggle, useLanguage } from '../lib/i18n';
 import { BookCoverImage } from './BookCoverImage';
-import { BookCard } from './BookCard';
 import { BookReviewsSection } from './BookReviewsSection';
+import { RecommendedBooks } from './RecommendedBooks';
 
 interface BookDetailViewProps {
   book: Book;
-  relatedBooks: Book[];
+  allBooks: Book[];
   currency: CurrencyCode;
   wishlistIds: Set<number>;
   customer: CustomerUser | null;
@@ -27,6 +29,7 @@ interface BookDetailViewProps {
   onToggleWishlist: (book: Book) => void;
   onBack: () => void;
   onSelectBook: (book: Book) => void;
+  onSelectAuthor: (authorSlug: string) => void;
   onAddToCart: (book: Book, quantity: number) => void;
   onBuyNow: (book: Book, quantity: number) => void;
   onPreviewSample: (book: Book) => void;
@@ -35,7 +38,7 @@ interface BookDetailViewProps {
 
 export function BookDetailView({
   book,
-  relatedBooks,
+  allBooks,
   currency,
   wishlistIds,
   customer,
@@ -44,17 +47,19 @@ export function BookDetailView({
   onToggleWishlist,
   onBack,
   onSelectBook,
+  onSelectAuthor,
   onAddToCart,
   onBuyNow,
   onPreviewSample,
   onOpenWhatsAppInquiry,
 }: BookDetailViewProps) {
+  const { language, t } = useLanguage();
   const [quantity, setQuantity] = useState(1);
   const [addedFeedback, setAddedFeedback] = useState(false);
 
   const isWishlisted = wishlistIds.has(book.id);
-
   const inStock = book.is_available && book.stock_quantity > 0;
+  const hasRating = (book.review_count || 0) > 0 && (book.average_rating || 0) > 0;
 
   const handleAdd = () => {
     onAddToCart(book, quantity);
@@ -65,38 +70,37 @@ export function BookDetailView({
   return (
     <div className="bg-[#F9FAFB] min-h-[75vh] py-10">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-14">
-        {/* Back Breadcrumb */}
-        <div>
+        {/* Back Breadcrumb & Language Toggle */}
+        <div className="flex items-center justify-between gap-4">
           <button
             type="button"
             onClick={onBack}
             className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-[#0B192C] transition-colors cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>Back to Catalog</span>
+            <span>{t('backToCatalog')}</span>
           </button>
+          <LanguageToggle />
         </div>
 
         {/* Contiguous PDP Layout: Sticky Gallery Left, Contiguous Purchase Module Right */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
-          {/* Left Column: Cover & Sample PDF Trigger */}
+          {/* Left Column: Cover & Interactive Book Preview Trigger */}
           <div className="lg:col-span-5 lg:sticky lg:top-24 space-y-4">
             <div className="aspect-[3/4] w-full max-w-md mx-auto bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
               <BookCoverImage src={book.cover_url} title={book.title} author={book.author} />
             </div>
 
-            {book.has_sample_pdf && (
-              <div className="max-w-md mx-auto">
-                <button
-                  type="button"
-                  onClick={() => onPreviewSample(book)}
-                  className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 bg-white border border-[#0B192C] text-[#0B192C] text-sm font-semibold rounded-md hover:bg-slate-50 transition-colors cursor-pointer"
-                >
-                  <FileText className="w-4 h-4 text-[#9F7918]" />
-                  <span>Preview Sample PDF</span>
-                </button>
-              </div>
-            )}
+            <div className="max-w-md mx-auto">
+              <button
+                type="button"
+                onClick={() => onPreviewSample(book)}
+                className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 bg-white border border-[#0B192C] text-[#0B192C] text-sm font-semibold rounded-md hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                <FileText className="w-4 h-4 text-[#9F7918]" />
+                <span>{t('previewSamplePdf')}</span>
+              </button>
+            </div>
           </div>
 
           {/* Right Column: Contiguous Purchase Module + Description */}
@@ -119,13 +123,35 @@ export function BookDetailView({
                     <span className="font-medium text-[#0B192C]">Featured Edition</span>
                   </>
                 )}
+                {hasRating && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="inline-flex items-center gap-1 font-mono font-medium text-[#0B192C] tabular-nums">
+                      <Star className="w-3.5 h-3.5 text-[#C59B27]" fill="currentColor" />
+                      <span>
+                        {book.average_rating!.toFixed(1)} ({book.review_count})
+                      </span>
+                    </span>
+                  </>
+                )}
               </div>
 
               <h1 className="font-serif text-3xl sm:text-4xl font-bold text-[#0B192C] leading-tight">
                 {book.title}
               </h1>
               <p className="text-base text-slate-700">
-                By <span className="font-semibold text-[#0B192C]">{book.author}</span>
+                {language === 'hi' ? 'लेखक:' : 'By'}{' '}
+                {book.author_slug ? (
+                  <button
+                    type="button"
+                    onClick={() => onSelectAuthor(book.author_slug!)}
+                    className="font-semibold text-[#0B192C] hover:text-[#9F7918] underline underline-offset-4 transition-colors cursor-pointer"
+                  >
+                    {book.author}
+                  </button>
+                ) : (
+                  <span className="font-semibold text-[#0B192C]">{book.author}</span>
+                )}
               </p>
 
               <div className="pt-2 flex flex-wrap items-baseline justify-between gap-4">
@@ -138,8 +164,8 @@ export function BookDetailView({
                   }`}
                 >
                   {inStock
-                    ? `In Stock (${book.stock_quantity} available)`
-                    : 'Currently Out of Stock'}
+                    ? `${t('inStock')} (${book.stock_quantity} ${language === 'hi' ? 'उपलब्ध' : 'available'})`
+                    : t('outOfStock')}
                 </p>
               </div>
             </div>
@@ -180,12 +206,12 @@ export function BookDetailView({
                   {addedFeedback ? (
                     <>
                       <Check className="w-4 h-4 text-[#DFC166]" />
-                      <span>Added to Bag</span>
+                      <span>{t('addedToBag')}</span>
                     </>
                   ) : (
                     <>
                       <ShoppingBag className="w-4 h-4 text-[#DFC166]" />
-                      <span>Add to Cart</span>
+                      <span>{t('addToCart')}</span>
                     </>
                   )}
                 </button>
@@ -197,7 +223,7 @@ export function BookDetailView({
                   className="flex-1 min-w-[150px] inline-flex items-center justify-center gap-2 px-5 py-3 bg-[#C59B27] text-[#07111E] text-sm font-semibold rounded-md hover:bg-[#DFC166] transition-colors disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <Zap className="w-4 h-4" />
-                  <span>Buy Now</span>
+                  <span>{t('buyNow')}</span>
                 </button>
               </div>
 
@@ -208,7 +234,7 @@ export function BookDetailView({
                   className="inline-flex items-center justify-center gap-2 px-5 py-2.5 border border-emerald-700 text-emerald-800 text-sm font-semibold rounded-md hover:bg-emerald-50 transition-colors cursor-pointer"
                 >
                   <MessageSquare className="w-4 h-4" />
-                  <span>Inquire on WhatsApp</span>
+                  <span>{t('inquireWhatsapp')}</span>
                 </button>
 
                 <button
@@ -225,7 +251,7 @@ export function BookDetailView({
                     className="w-4 h-4"
                     fill={isWishlisted ? 'currentColor' : 'none'}
                   />
-                  <span>{isWishlisted ? 'Saved in Wishlist' : 'Save to Wishlist'}</span>
+                  <span>{isWishlisted ? t('savedWishlist') : t('saveWishlist')}</span>
                 </button>
               </div>
             </div>
@@ -233,7 +259,7 @@ export function BookDetailView({
             {/* Editorial Description */}
             <div className="pt-4 border-t border-slate-200 space-y-2.5">
               <h2 className="font-serif text-lg font-semibold text-[#0B192C]">
-                About This Edition
+                {t('aboutEdition')}
               </h2>
               <p className="text-sm sm:text-base text-slate-700 leading-relaxed whitespace-pre-line">
                 {book.description}
@@ -243,7 +269,7 @@ export function BookDetailView({
             {/* Bibliographic Details Grid */}
             <div className="pt-4 border-t border-slate-200">
               <h2 className="font-serif text-lg font-semibold text-[#0B192C] mb-3">
-                Bibliographic Specifications
+                {t('bibliographicSpecs')}
               </h2>
               <dl className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-md">
@@ -253,27 +279,37 @@ export function BookDetailView({
                   </dd>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-md">
-                  <dt className="text-xs text-slate-500">Binding</dt>
+                  <dt className="text-xs text-slate-500">
+                    {language === 'hi' ? 'बाइंडिंग' : 'Binding'}
+                  </dt>
                   <dd className="font-medium text-[#0B192C] mt-0.5">{book.binding || 'Hardcover'}</dd>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-md">
-                  <dt className="text-xs text-slate-500">Language</dt>
+                  <dt className="text-xs text-slate-500">
+                    {language === 'hi' ? 'भाषा' : 'Language'}
+                  </dt>
                   <dd className="font-medium text-[#0B192C] mt-0.5">{book.language || 'English'}</dd>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-md">
-                  <dt className="text-xs text-slate-500">Pages</dt>
+                  <dt className="text-xs text-slate-500">
+                    {language === 'hi' ? 'पृष्ठ' : 'Pages'}
+                  </dt>
                   <dd className="font-mono font-medium text-[#0B192C] mt-0.5 tabular-nums">
                     {book.pages || '—'}
                   </dd>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-md">
-                  <dt className="text-xs text-slate-500">Publication Year</dt>
+                  <dt className="text-xs text-slate-500">
+                    {language === 'hi' ? 'प्रकाशन वर्ष' : 'Publication Year'}
+                  </dt>
                   <dd className="font-mono font-medium text-[#0B192C] mt-0.5 tabular-nums">
                     {book.publication_year || '—'}
                   </dd>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-md">
-                  <dt className="text-xs text-slate-500">Subject</dt>
+                  <dt className="text-xs text-slate-500">
+                    {language === 'hi' ? 'विषय' : 'Subject'}
+                  </dt>
                   <dd className="font-medium text-[#0B192C] mt-0.5">
                     {book.category_name || 'General'}
                   </dd>
@@ -292,28 +328,20 @@ export function BookDetailView({
           onCustomerLogout={onCustomerLogout}
         />
 
-        {/* Related Editions */}
-        {relatedBooks.length > 0 && (
-          <section className="pt-6 border-t border-slate-200 space-y-6">
-            <h2 className="font-serif text-2xl font-bold text-[#0B192C]">
-              More from Bhagwati Publications
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-7">
-              {relatedBooks.slice(0, 3).map((rel) => (
-                <BookCard
-                  key={rel.id}
-                  book={rel}
-                  currency={currency}
-                  isWishlisted={wishlistIds.has(rel.id)}
-                  onToggleWishlist={onToggleWishlist}
-                  onSelectBook={onSelectBook}
-                  onAddToCart={(b) => onAddToCart(b, 1)}
-                  onPreviewSample={onPreviewSample}
-                />
-              ))}
-            </div>
-          </section>
-        )}
+        {/* Recommended Editions based on Subject, Author, Language & Rating */}
+        <RecommendedBooks
+          allBooks={allBooks}
+          referenceBooks={[book]}
+          excludeIds={[book.id]}
+          title={t('moreFromPublisher')}
+          currency={currency}
+          wishlistIds={wishlistIds}
+          onToggleWishlist={onToggleWishlist}
+          onSelectBook={onSelectBook}
+          onAddToCart={(b) => onAddToCart(b, 1)}
+          onPreviewSample={onPreviewSample}
+          onSelectAuthor={onSelectAuthor}
+        />
       </div>
     </div>
   );

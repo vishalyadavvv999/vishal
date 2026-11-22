@@ -13,11 +13,12 @@ import {
   verifyPassword,
   type AuthenticatedRequest,
 } from './server/auth.ts';
-import { db, initializeDatabase, slugify } from './server/db.ts';
+import { db, initializeDatabase, slugify, syncAuthorsFromBooks } from './server/db.ts';
 import {
   bookUpload,
   COVERS_DIR,
   deleteStoredFile,
+  leadershipPhotoUpload,
   PRIVATE_PDFS_DIR,
   resolveSafeFilePath,
   SAMPLE_PDFS_DIR,
@@ -29,12 +30,23 @@ initializeDatabase();
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
+// Respect reverse-proxy headers (Nginx, Cloudflare, Railway, Render, Fly.io) for custom domains
+app.set('trust proxy', 1);
+
 app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   next();
 });
+
+function isHttpsRequest(req: Request): boolean {
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  return req.secure || forwardedProto === 'https';
+}
 
 interface BookRow {
   id: number;
@@ -61,6 +73,9 @@ interface BookRow {
   is_published: number;
   created_at: string;
   updated_at: string;
+  author_slug?: string | null;
+  average_rating?: number;
+  review_count?: number;
 }
 
 function getCoverUrl(coverPath: string): string {
@@ -75,6 +90,7 @@ function serializePublicBook(row: BookRow) {
     title: row.title,
     slug: row.slug,
     author: row.author,
+    author_slug: row.author_slug || slugify(row.author),
     isbn: row.isbn,
     description: row.description,
     price: row.price,
@@ -92,6 +108,8 @@ function serializePublicBook(row: BookRow) {
     is_featured: Boolean(row.is_featured),
     is_new_arrival: Boolean(row.is_new_arrival),
     is_published: Boolean(row.is_published),
+    average_rating: Number(row.average_rating || 0),
+    review_count: Number(row.review_count || 0),
     created_at: row.created_at,
   };
 }
@@ -133,6 +151,16 @@ function getPublicStoreConfig() {
     payment_gateway_provider: s.payment_gateway_provider || 'none',
     payment_gateway_public_key: s.payment_gateway_public_key || '',
     payment_gateway_mode: s.payment_gateway_mode === 'live' ? 'live' : 'test',
+    founder_name: s.founder_name || 'Dr. S.B. Saraswat',
+    founder_designation:
+      s.founder_designation || 'Director & Managing Head · Bhagwati Publications',
+    founder_credentials:
+      s.founder_credentials ||
+      'Ph.D. · B.E. (Electrical & Industrial Engineering) · PG in ADR, Public Administration & Materials Management · ISO-9000 & High-Tension Electrical Certified',
+    founder_bio:
+      s.founder_bio ||
+      'Dr. S.B. Saraswat brings decades of international industrial leadership, institutional governance, and technical scholarship to Bhagwati Publications. He serves as Resident Director at Danieli Corus (Netherlands) and previously held senior executive appointments as Joint Director (Technical/Materials) at Steel Authority of India Limited (SAIL) and Director of Supply Chain Management at Global Steel Sofia (Europe).\n\nUnder his editorial stewardship, Bhagwati Publications advances rigorous academic, engineering, heritage, and management publishing for scholars, universities, and professional libraries.',
+    founder_photo_url: s.founder_photo_url || '',
   };
 }
 
@@ -169,6 +197,47 @@ function generateUniqueCategorySlug(name: string, excludeId?: number): string {
     if (!existing) return candidate;
     counter += 1;
     candidate = `${base}-${counter}`;
+  }
+}
+
+function generateUniqueUpdateSlug(title: string, excludeId?: number): string {
+  const base = slugify(title);
+  let candidate = base;
+  let counter = 1;
+  while (true) {
+    const existing = excludeId
+      ? (db
+          .prepare(`SELECT id FROM publication_updates WHERE slug = ? AND id != ?`)
+          .get(candidate, excludeId) as { id: number } | undefined)
+      : (db.prepare(`SELECT id FROM publication_updates WHERE slug = ?`).get(candidate) as
+          | { id: number }
+          | undefined);
+    if (!existing) return candidate;
+    counter += 1;
+    candidate = `${base}-${counter}`;
+  }
+}
+
+function extractReadablePdfLines(filePath: string): string[] {
+  try {
+    const raw = fs.readFileSync(filePath, 'latin1');
+    const matches = raw.match(/\(([^()]{3,160})\)\s*Tj/g);
+    if (!matches || matches.length === 0) return [];
+    const lines: string[] = [];
+    for (const m of matches) {
+      const inner = m
+        .replace(/^\(/, '')
+        .replace(/\)\s*Tj$/, '')
+        .replace(/\\([()\\])/g, '$1')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (inner && !/^BHAGWATI PUBLICATIONS/i.test(inner)) {
+        lines.push(inner);
+      }
+    }
+    return lines.slice(0, 60);
+  } catch {
+    return [];
   }
 }
 
@@ -214,6 +283,12 @@ app.get('/api/categories', (_req, res) => {
 app.get('/api/books', (req, res) => {
   const category = typeof req.query.category === 'string' ? req.query.category.trim() : '';
   const search = typeof req.query.search === 'string' ? req.query.search.trim().toLowerCase() : '';
+  const language = typeof req.query.language === 'string' ? req.query.language.trim().toLowerCase() : '';
+  const binding = typeof req.query.binding === 'string' ? req.query.binding.trim().toLowerCase() : '';
+  const author = typeof req.query.author === 'string' ? req.query.author.trim().toLowerCase() : '';
+  const minPrice = req.query.min_price !== undefined && req.query.min_price !== '' ? Number(req.query.min_price) : null;
+  const maxPrice = req.query.max_price !== undefined && req.query.max_price !== '' ? Number(req.query.max_price) : null;
+  const inStockOnly = req.query.in_stock === 'true';
   const featured = req.query.featured === 'true';
   const newArrival = req.query.new_arrival === 'true';
   const sort = typeof req.query.sort === 'string' ? req.query.sort : 'newest';
@@ -225,6 +300,29 @@ app.get('/api/books', (req, res) => {
     conditions.push('c.slug = ?');
     params.push(category);
   }
+  if (language && language !== 'all') {
+    conditions.push('LOWER(b.language) = ?');
+    params.push(language);
+  }
+  if (binding && binding !== 'all') {
+    conditions.push('LOWER(b.binding) = ?');
+    params.push(binding);
+  }
+  if (author && author !== 'all') {
+    conditions.push('LOWER(b.author) = ?');
+    params.push(author);
+  }
+  if (minPrice !== null && Number.isFinite(minPrice)) {
+    conditions.push('b.price >= ?');
+    params.push(minPrice);
+  }
+  if (maxPrice !== null && Number.isFinite(maxPrice)) {
+    conditions.push('b.price <= ?');
+    params.push(maxPrice);
+  }
+  if (inStockOnly) {
+    conditions.push('b.is_available = 1 AND b.stock_quantity > 0');
+  }
   if (featured) {
     conditions.push('b.is_featured = 1');
   }
@@ -233,22 +331,29 @@ app.get('/api/books', (req, res) => {
   }
   if (search) {
     conditions.push(
-      `(LOWER(b.title) LIKE ? OR LOWER(b.author) LIKE ? OR LOWER(b.isbn) LIKE ? OR LOWER(COALESCE(c.name, '')) LIKE ?)`
+      `(LOWER(b.title) LIKE ? OR LOWER(b.author) LIKE ? OR LOWER(b.isbn) LIKE ? OR LOWER(b.description) LIKE ? OR LOWER(COALESCE(c.name, '')) LIKE ?)`
     );
     const pattern = `%${search}%`;
-    params.push(pattern, pattern, pattern, pattern);
+    params.push(pattern, pattern, pattern, pattern, pattern);
   }
 
   let orderBy = 'b.created_at DESC, b.id DESC';
   if (sort === 'price_asc') orderBy = 'b.price ASC';
   else if (sort === 'price_desc') orderBy = 'b.price DESC';
   else if (sort === 'title') orderBy = 'b.title ASC';
+  else if (sort === 'rating') orderBy = 'average_rating DESC, review_count DESC, b.created_at DESC';
 
   const sql = `
-    SELECT b.*, c.name as category_name, c.slug as category_slug
+    SELECT b.*, c.name as category_name, c.slug as category_slug,
+           a.slug as author_slug,
+           COALESCE(ROUND(AVG(br.rating), 1), 0) as average_rating,
+           COUNT(br.id) as review_count
     FROM books b
     LEFT JOIN categories c ON c.id = b.category_id
+    LEFT JOIN authors a ON LOWER(a.name) = LOWER(TRIM(b.author))
+    LEFT JOIN book_reviews br ON br.book_id = b.id
     WHERE ${conditions.join(' AND ')}
+    GROUP BY b.id
     ORDER BY ${orderBy}
   `;
 
@@ -262,10 +367,16 @@ app.get('/api/books/:idOrSlug', (req, res) => {
   const row = db
     .prepare(
       `
-      SELECT b.*, c.name as category_name, c.slug as category_slug
+      SELECT b.*, c.name as category_name, c.slug as category_slug,
+             a.slug as author_slug,
+             COALESCE(ROUND(AVG(br.rating), 1), 0) as average_rating,
+             COUNT(br.id) as review_count
       FROM books b
       LEFT JOIN categories c ON c.id = b.category_id
+      LEFT JOIN authors a ON LOWER(a.name) = LOWER(TRIM(b.author))
+      LEFT JOIN book_reviews br ON br.book_id = b.id
       WHERE b.is_published = 1 AND ${isNumeric ? 'b.id = ?' : 'b.slug = ?'}
+      GROUP BY b.id
       `
     )
     .get(isNumeric ? Number(param) : param) as BookRow | undefined;
@@ -275,6 +386,227 @@ app.get('/api/books/:idOrSlug', (req, res) => {
     return;
   }
   res.json(serializePublicBook(row));
+});
+
+// Interactive Digital Preview Pages for a Book
+app.get('/api/books/:id/preview-excerpt', (req, res) => {
+  const bookId = Number(req.params.id);
+  if (!Number.isInteger(bookId)) {
+    res.status(400).json({ error: 'Invalid book ID' });
+    return;
+  }
+
+  const book = db
+    .prepare(
+      `
+      SELECT b.*, c.name as category_name, c.slug as category_slug
+      FROM books b
+      LEFT JOIN categories c ON c.id = b.category_id
+      WHERE b.id = ? AND b.is_published = 1
+      `
+    )
+    .get(bookId) as BookRow | undefined;
+
+  if (!book) {
+    res.status(404).json({ error: 'Book not found' });
+    return;
+  }
+
+  let extractedPdfLines: string[] = [];
+  if (book.sample_pdf_path) {
+    const safePath = resolveSafeFilePath(SAMPLE_PDFS_DIR, book.sample_pdf_path);
+    if (safePath && fs.existsSync(safePath)) {
+      extractedPdfLines = extractReadablePdfLines(safePath);
+    }
+  }
+
+  const chapterLines = extractedPdfLines.filter(
+    (line) =>
+      line !== book.title &&
+      !line.startsWith(`By ${book.author}`) &&
+      !line.startsWith('Category:') &&
+      line !== 'Publisher Synopsis' &&
+      !line.startsWith('Note: This is a public sample')
+  );
+
+  const pages = [
+    {
+      page_number: 1,
+      chapter_title: 'Title & Edition Sheet',
+      kind: 'title',
+      paragraphs: [
+        `${book.title}`,
+        `Written / Edited by ${book.author}`,
+        `Subject: ${book.category_name || 'General'} · Language: ${book.language || 'English'} · Binding: ${book.binding || 'Hardcover'}`,
+        `ISBN-13: ${book.isbn} · Published: ${book.publication_year || 'Current Edition'}${book.pages ? ` · Extent: ${book.pages} pages` : ''}`,
+        'Published by Bhagwati Publications. Official Digital Sample Edition Preview.',
+      ],
+    },
+    {
+      page_number: 2,
+      chapter_title: 'Editorial Synopsis',
+      kind: 'synopsis',
+      paragraphs: book.description
+        .split(/\n+/)
+        .map((p) => p.trim())
+        .filter(Boolean),
+    },
+    {
+      page_number: 3,
+      chapter_title: 'Sample Reading Excerpt',
+      kind: 'excerpt',
+      paragraphs:
+        chapterLines.length > 0
+          ? [chapterLines.join(' ')]
+          : [
+              `Readers exploring "${book.title}" will find carefully verified editorial structure, bibliographic citations, and crisp layout prepared for academic libraries and dedicated readers.`,
+              'For complete chapter distribution, institutional inspection copies, or classroom adoption inquiries, connect directly with Bhagwati Publications via our Customer Support desk or WhatsApp inquiry channel.',
+            ],
+    },
+  ];
+
+  res.json({
+    book_id: book.id,
+    title: book.title,
+    author: book.author,
+    isbn: book.isbn,
+    has_sample_pdf: Boolean(book.sample_pdf_path),
+    pages,
+  });
+});
+
+// Public Author Directory & Author Profile Routes
+app.get('/api/authors', (_req, res) => {
+  syncAuthorsFromBooks();
+  const authors = db
+    .prepare(`SELECT id, name, slug, credentials, affiliation, location, bio, created_at FROM authors ORDER BY name ASC`)
+    .all() as Array<{
+    id: number;
+    name: string;
+    slug: string;
+    credentials: string;
+    affiliation: string;
+    location: string;
+    bio: string;
+    created_at: string;
+  }>;
+
+  const bookStmt = db.prepare(`
+    SELECT b.id, b.title, b.slug, b.language, b.publication_year, c.name as category_name
+    FROM books b
+    LEFT JOIN categories c ON c.id = b.category_id
+    WHERE b.is_published = 1 AND LOWER(TRIM(b.author)) = LOWER(?)
+    ORDER BY b.publication_year DESC, b.id DESC
+  `);
+
+  const payload = authors
+    .map((a) => {
+      const books = bookStmt.all(a.name) as Array<{
+        id: number;
+        title: string;
+        slug: string;
+        language: string;
+        publication_year: number;
+        category_name: string | null;
+      }>;
+      const subjects = Array.from(
+        new Set(books.map((b) => b.category_name).filter((x): x is string => Boolean(x)))
+      );
+      const languages = Array.from(
+        new Set(books.map((b) => b.language).filter((x): x is string => Boolean(x)))
+      );
+      return {
+        ...a,
+        book_count: books.length,
+        subjects,
+        languages,
+        featured_title: books[0]?.title || '',
+      };
+    })
+    .filter((a) => a.book_count > 0);
+
+  res.json(payload);
+});
+
+app.get('/api/authors/:slug', (req, res) => {
+  syncAuthorsFromBooks();
+  const author = db
+    .prepare(`SELECT id, name, slug, credentials, affiliation, location, bio, created_at FROM authors WHERE slug = ?`)
+    .get(req.params.slug) as
+    | {
+        id: number;
+        name: string;
+        slug: string;
+        credentials: string;
+        affiliation: string;
+        location: string;
+        bio: string;
+        created_at: string;
+      }
+    | undefined;
+
+  if (!author) {
+    res.status(404).json({ error: 'Author profile not found' });
+    return;
+  }
+
+  const books = db
+    .prepare(
+      `
+      SELECT b.*, c.name as category_name, c.slug as category_slug,
+             ? as author_slug,
+             COALESCE(ROUND(AVG(br.rating), 1), 0) as average_rating,
+             COUNT(br.id) as review_count
+      FROM books b
+      LEFT JOIN categories c ON c.id = b.category_id
+      LEFT JOIN book_reviews br ON br.book_id = b.id
+      WHERE b.is_published = 1 AND LOWER(TRIM(b.author)) = LOWER(?)
+      GROUP BY b.id
+      ORDER BY b.publication_year DESC, b.id DESC
+      `
+    )
+    .all(author.slug, author.name) as BookRow[];
+
+  const serializedBooks = books.map(serializePublicBook);
+  const subjects = Array.from(
+    new Set(serializedBooks.map((b) => b.category_name).filter(Boolean))
+  );
+  const languages = Array.from(
+    new Set(serializedBooks.map((b) => b.language).filter(Boolean))
+  );
+
+  res.json({
+    author: {
+      ...author,
+      book_count: serializedBooks.length,
+      subjects,
+      languages,
+      featured_title: serializedBooks[0]?.title || '',
+    },
+    books: serializedBooks,
+  });
+});
+
+// Public News & Publication Updates
+app.get('/api/updates', (_req, res) => {
+  const rows = db
+    .prepare(
+      `
+      SELECT u.*, b.title as related_book_title, b.slug as related_book_slug
+      FROM publication_updates u
+      LEFT JOIN books b ON b.id = u.related_book_id AND b.is_published = 1
+      WHERE u.is_published = 1
+      ORDER BY u.published_at DESC, u.id DESC
+      `
+    )
+    .all() as Array<Record<string, unknown>>;
+
+  res.json(
+    rows.map((r) => ({
+      ...r,
+      is_published: Boolean(r.is_published),
+    }))
+  );
 });
 
 // Serve uploaded cover images securely from COVERS_DIR
@@ -484,19 +816,35 @@ app.post('/api/orders', (req, res) => {
 app.get('/api/orders/lookup', (req, res) => {
   const orderNumber =
     typeof req.query.order_number === 'string' ? req.query.order_number.trim() : '';
-  const email =
-    typeof req.query.email === 'string' ? req.query.email.trim().toLowerCase() : '';
+  const contact =
+    typeof req.query.email === 'string' && req.query.email.trim()
+      ? req.query.email.trim()
+      : typeof req.query.contact === 'string'
+        ? req.query.contact.trim()
+        : '';
 
-  if (!orderNumber || !email) {
-    res.status(400).json({ error: 'Order number and email are required' });
+  if (!orderNumber || !contact) {
+    res.status(400).json({ error: 'Order number and email or phone number are required' });
     return;
   }
 
-  const row = db
+  const normalizedEmail = contact.toLowerCase();
+  const normalizedPhone = contact.replace(/[^\d]/g, '');
+
+  let row = db
     .prepare(
       `SELECT id FROM orders WHERE UPPER(order_number) = UPPER(?) AND LOWER(customer_email) = ?`
     )
-    .get(orderNumber, email) as { id: number } | undefined;
+    .get(orderNumber, normalizedEmail) as { id: number } | undefined;
+
+  if (!row && normalizedPhone.length >= 6) {
+    const candidates = db
+      .prepare(`SELECT id, customer_phone FROM orders WHERE UPPER(order_number) = UPPER(?)`)
+      .all(orderNumber) as Array<{ id: number; customer_phone: string }>;
+    row = candidates.find(
+      (c) => c.customer_phone.replace(/[^\d]/g, '').endsWith(normalizedPhone.slice(-8))
+    );
+  }
 
   if (!row) {
     res.status(404).json({ error: 'No matching order found for those details.' });
@@ -656,7 +1004,7 @@ app.post('/api/customers/register', (req, res) => {
   res.cookie(CUSTOMER_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: isHttpsRequest(req),
     maxAge: 1000 * 60 * 60 * 24 * 7,
     path: '/',
   });
@@ -687,7 +1035,7 @@ app.post('/api/customers/login', (req, res) => {
   res.cookie(CUSTOMER_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: isHttpsRequest(req),
     maxAge: 1000 * 60 * 60 * 24 * 7,
     path: '/',
   });
@@ -848,7 +1196,7 @@ app.post('/api/admin/login', (req, res) => {
   res.cookie(ADMIN_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: isHttpsRequest(req),
     maxAge: 1000 * 60 * 60 * 24 * 7,
     path: '/',
   });
@@ -914,6 +1262,170 @@ app.get('/api/admin/overview', requireAdmin, (_req, res) => {
     pending_orders: orderStats.pending_orders || 0,
     total_revenue: Number((orderStats.total_revenue || 0).toFixed(2)),
     open_inquiries: inquiryStats.open_inquiries || 0,
+  });
+});
+
+app.get('/api/admin/analytics', requireAdmin, (_req, res) => {
+  const summaryRow = db
+    .prepare(
+      `
+      SELECT
+        COUNT(*) as total_orders,
+        COALESCE(SUM(CASE WHEN order_status != 'cancelled' THEN total_amount ELSE 0 END), 0) as net_revenue,
+        COALESCE(AVG(CASE WHEN order_status != 'cancelled' THEN total_amount END), 0) as avg_order_value
+      FROM orders
+      `
+    )
+    .get() as { total_orders: number; net_revenue: number; avg_order_value: number };
+
+  const unitsRow = db
+    .prepare(
+      `
+      SELECT COALESCE(SUM(oi.quantity), 0) as total_units
+      FROM order_items oi
+      JOIN orders o ON o.id = oi.order_id
+      WHERE o.order_status != 'cancelled'
+      `
+    )
+    .get() as { total_units: number };
+
+  const inventoryRow = db
+    .prepare(
+      `
+      SELECT
+        COALESCE(SUM(stock_quantity), 0) as total_stock_units,
+        COALESCE(SUM(price * stock_quantity), 0) as inventory_retail_value,
+        SUM(CASE WHEN stock_quantity <= 5 AND is_published = 1 THEN 1 ELSE 0 END) as low_stock_titles
+      FROM books
+      `
+    )
+    .get() as { total_stock_units: number; inventory_retail_value: number; low_stock_titles: number };
+
+  const reviewRow = db
+    .prepare(
+      `
+      SELECT COUNT(*) as total_reviews, COALESCE(ROUND(AVG(rating), 1), 0) as average_rating
+      FROM book_reviews
+      `
+    )
+    .get() as { total_reviews: number; average_rating: number };
+
+  const monthlyRevenue = db
+    .prepare(
+      `
+      SELECT strftime('%Y-%m', created_at) as month,
+             COUNT(*) as order_count,
+             COALESCE(SUM(total_amount), 0) as revenue
+      FROM orders
+      WHERE order_status != 'cancelled'
+      GROUP BY strftime('%Y-%m', created_at)
+      ORDER BY month ASC
+      LIMIT 12
+      `
+    )
+    .all() as Array<{ month: string; order_count: number; revenue: number }>;
+
+  const orderStatusBreakdown = db
+    .prepare(
+      `SELECT order_status as status, COUNT(*) as count FROM orders GROUP BY order_status`
+    )
+    .all() as Array<{ status: string; count: number }>;
+
+  const paymentMethodBreakdown = db
+    .prepare(
+      `
+      SELECT payment_method as method, COUNT(*) as count, COALESCE(SUM(total_amount), 0) as revenue
+      FROM orders
+      WHERE order_status != 'cancelled'
+      GROUP BY payment_method
+      `
+    )
+    .all() as Array<{ method: string; count: number; revenue: number }>;
+
+  const categoryPerformance = db
+    .prepare(
+      `
+      SELECT c.id, c.name,
+             COUNT(DISTINCT b.id) as book_count,
+             COALESCE(SUM(b.stock_quantity), 0) as stock_units,
+             COALESCE((
+               SELECT SUM(oi.quantity)
+               FROM order_items oi
+               JOIN orders o ON o.id = oi.order_id
+               JOIN books b2 ON b2.id = oi.book_id
+               WHERE b2.category_id = c.id AND o.order_status != 'cancelled'
+             ), 0) as units_sold,
+             COALESCE((
+               SELECT SUM(oi.line_total)
+               FROM order_items oi
+               JOIN orders o ON o.id = oi.order_id
+               JOIN books b2 ON b2.id = oi.book_id
+               WHERE b2.category_id = c.id AND o.order_status != 'cancelled'
+             ), 0) as revenue
+      FROM categories c
+      LEFT JOIN books b ON b.category_id = c.id
+      GROUP BY c.id
+      ORDER BY revenue DESC, book_count DESC
+      `
+    )
+    .all() as Array<{
+    id: number;
+    name: string;
+    book_count: number;
+    stock_units: number;
+    units_sold: number;
+    revenue: number;
+  }>;
+
+  const topBooks = db
+    .prepare(
+      `
+      SELECT b.id, b.title, b.author, b.price, b.stock_quantity,
+             COALESCE(SUM(CASE WHEN o.order_status != 'cancelled' THEN oi.quantity ELSE 0 END), 0) as units_sold,
+             COALESCE(SUM(CASE WHEN o.order_status != 'cancelled' THEN oi.line_total ELSE 0 END), 0) as revenue,
+             COALESCE((SELECT ROUND(AVG(rating), 1) FROM book_reviews br WHERE br.book_id = b.id), 0) as average_rating,
+             COALESCE((SELECT COUNT(*) FROM book_reviews br WHERE br.book_id = b.id), 0) as review_count
+      FROM books b
+      LEFT JOIN order_items oi ON oi.book_id = b.id
+      LEFT JOIN orders o ON o.id = oi.order_id
+      GROUP BY b.id
+      ORDER BY units_sold DESC, revenue DESC, review_count DESC, b.id ASC
+      LIMIT 6
+      `
+    )
+    .all() as Array<{
+    id: number;
+    title: string;
+    author: string;
+    price: number;
+    stock_quantity: number;
+    units_sold: number;
+    revenue: number;
+    average_rating: number;
+    review_count: number;
+  }>;
+
+  const inquiryChannels = db
+    .prepare(`SELECT channel, COUNT(*) as count FROM inquiries GROUP BY channel`)
+    .all() as Array<{ channel: string; count: number }>;
+
+  res.json({
+    kpis: {
+      net_revenue: Number((summaryRow.net_revenue || 0).toFixed(2)),
+      avg_order_value: Number((summaryRow.avg_order_value || 0).toFixed(2)),
+      total_units_sold: unitsRow.total_units || 0,
+      total_stock_units: inventoryRow.total_stock_units || 0,
+      inventory_retail_value: Number((inventoryRow.inventory_retail_value || 0).toFixed(2)),
+      low_stock_titles: inventoryRow.low_stock_titles || 0,
+      total_reviews: reviewRow.total_reviews || 0,
+      average_rating: Number(reviewRow.average_rating || 0),
+    },
+    monthly_revenue: monthlyRevenue,
+    order_status_breakdown: orderStatusBreakdown,
+    payment_method_breakdown: paymentMethodBreakdown,
+    category_performance: categoryPerformance,
+    top_books: topBooks,
+    inquiry_channels: inquiryChannels,
   });
 });
 
@@ -990,6 +1502,8 @@ app.post('/api/admin/books', requireAdmin, uploadBookFields, (req, res) => {
       body.is_new_arrival === 'false' ? 0 : 1,
       body.is_published === 'false' ? 0 : 1
     );
+
+  syncAuthorsFromBooks();
 
   const created = db
     .prepare(
@@ -1092,12 +1606,16 @@ app.put('/api/admin/books/:id', requireAdmin, uploadBookFields, (req, res) => {
     bookId
   );
 
+  syncAuthorsFromBooks();
+
   const updated = db
     .prepare(
       `
-      SELECT b.*, c.name as category_name, c.slug as category_slug
+      SELECT b.*, c.name as category_name, c.slug as category_slug,
+             a.slug as author_slug
       FROM books b
       LEFT JOIN categories c ON c.id = b.category_id
+      LEFT JOIN authors a ON LOWER(a.name) = LOWER(TRIM(b.author))
       WHERE b.id = ?
       `
     )
@@ -1329,6 +1847,199 @@ app.patch('/api/admin/inquiries/:id', requireAdmin, (req, res) => {
   res.json({ inquiry: updated });
 });
 
+// Admin Authors Management
+app.get('/api/admin/authors', requireAdmin, (_req, res) => {
+  syncAuthorsFromBooks();
+  const rows = db
+    .prepare(
+      `
+      SELECT a.*, COUNT(b.id) as book_count
+      FROM authors a
+      LEFT JOIN books b ON LOWER(TRIM(b.author)) = LOWER(a.name)
+      GROUP BY a.id
+      ORDER BY a.name ASC
+      `
+    )
+    .all();
+  res.json(rows);
+});
+
+app.put('/api/admin/authors/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare(`SELECT id FROM authors WHERE id = ?`).get(id);
+  if (!existing) {
+    res.status(404).json({ error: 'Author not found' });
+    return;
+  }
+  const { credentials, affiliation, location, bio } = req.body as {
+    credentials?: string;
+    affiliation?: string;
+    location?: string;
+    bio?: string;
+  };
+  db.prepare(
+    `
+    UPDATE authors SET
+      credentials = ?, affiliation = ?, location = ?, bio = ?, updated_at = datetime('now')
+    WHERE id = ?
+    `
+  ).run(
+    (credentials || '').trim(),
+    (affiliation || '').trim(),
+    (location || '').trim(),
+    (bio || '').trim(),
+    id
+  );
+  const updated = db
+    .prepare(
+      `
+      SELECT a.*, COUNT(b.id) as book_count
+      FROM authors a
+      LEFT JOIN books b ON LOWER(TRIM(b.author)) = LOWER(a.name)
+      WHERE a.id = ?
+      GROUP BY a.id
+      `
+    )
+    .get(id);
+  res.json({ author: updated });
+});
+
+// Admin News & Publication Updates
+app.get('/api/admin/updates', requireAdmin, (_req, res) => {
+  const rows = db
+    .prepare(
+      `
+      SELECT u.*, b.title as related_book_title, b.slug as related_book_slug
+      FROM publication_updates u
+      LEFT JOIN books b ON b.id = u.related_book_id
+      ORDER BY u.published_at DESC, u.id DESC
+      `
+    )
+    .all() as Array<Record<string, unknown>>;
+
+  res.json(
+    rows.map((r) => ({
+      ...r,
+      is_published: Boolean(r.is_published),
+    }))
+  );
+});
+
+app.post('/api/admin/updates', requireAdmin, (req, res) => {
+  const { title, category, summary, content, related_book_id, is_published } = req.body as {
+    title?: string;
+    category?: string;
+    summary?: string;
+    content?: string;
+    related_book_id?: number | null;
+    is_published?: boolean;
+  };
+
+  if (!title?.trim() || !summary?.trim() || !content?.trim()) {
+    res.status(400).json({ error: 'Title, summary, and full update content are required.' });
+    return;
+  }
+
+  const validCats = new Set(['new-release', 'announcement', 'event', 'press']);
+  const cat = category && validCats.has(category) ? category : 'announcement';
+  const slug = generateUniqueUpdateSlug(title);
+  const info = db
+    .prepare(
+      `
+      INSERT INTO publication_updates (
+        title, slug, category, summary, content, related_book_id, is_published, published_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `
+    )
+    .run(
+      title.trim(),
+      slug,
+      cat,
+      summary.trim(),
+      content.trim(),
+      related_book_id ? Number(related_book_id) : null,
+      is_published === false ? 0 : 1
+    );
+
+  const created = db
+    .prepare(
+      `
+      SELECT u.*, b.title as related_book_title, b.slug as related_book_slug
+      FROM publication_updates u
+      LEFT JOIN books b ON b.id = u.related_book_id
+      WHERE u.id = ?
+      `
+    )
+    .get(Number(info.lastInsertRowid)) as Record<string, unknown>;
+
+  res.status(201).json({ update: { ...created, is_published: Boolean(created.is_published) } });
+});
+
+app.put('/api/admin/updates/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare(`SELECT id, title, slug FROM publication_updates WHERE id = ?`).get(id) as
+    | { id: number; title: string; slug: string }
+    | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Publication update not found' });
+    return;
+  }
+
+  const { title, category, summary, content, related_book_id, is_published } = req.body as {
+    title?: string;
+    category?: string;
+    summary?: string;
+    content?: string;
+    related_book_id?: number | null;
+    is_published?: boolean;
+  };
+  if (!title?.trim() || !summary?.trim() || !content?.trim()) {
+    res.status(400).json({ error: 'Title, summary, and full update content are required.' });
+    return;
+  }
+
+  const validCats = new Set(['new-release', 'announcement', 'event', 'press']);
+  const cat = category && validCats.has(category) ? category : 'announcement';
+  const slug = title.trim() !== existing.title ? generateUniqueUpdateSlug(title, id) : existing.slug;
+
+  db.prepare(
+    `
+    UPDATE publication_updates SET
+      title = ?, slug = ?, category = ?, summary = ?, content = ?,
+      related_book_id = ?, is_published = ?, updated_at = datetime('now')
+    WHERE id = ?
+    `
+  ).run(
+    title.trim(),
+    slug,
+    cat,
+    summary.trim(),
+    content.trim(),
+    related_book_id ? Number(related_book_id) : null,
+    is_published === false ? 0 : 1,
+    id
+  );
+
+  const updated = db
+    .prepare(
+      `
+      SELECT u.*, b.title as related_book_title, b.slug as related_book_slug
+      FROM publication_updates u
+      LEFT JOIN books b ON b.id = u.related_book_id
+      WHERE u.id = ?
+      `
+    )
+    .get(id) as Record<string, unknown>;
+
+  res.json({ update: { ...updated, is_published: Boolean(updated.is_published) } });
+});
+
+app.delete('/api/admin/updates/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  db.prepare(`DELETE FROM publication_updates WHERE id = ?`).run(id);
+  res.json({ ok: true });
+});
+
 // Admin Settings
 app.get('/api/admin/settings', requireAdmin, (_req, res) => {
   const s = getSettingsMap();
@@ -1381,6 +2092,10 @@ app.put('/api/admin/settings', requireAdmin, (req: AuthenticatedRequest, res) =>
     'payment_gateway_public_key',
     'payment_gateway_secret_key',
     'payment_gateway_mode',
+    'founder_name',
+    'founder_designation',
+    'founder_credentials',
+    'founder_bio',
   ];
 
   const upsert = db.prepare(
@@ -1406,6 +2121,67 @@ app.put('/api/admin/settings', requireAdmin, (req: AuthenticatedRequest, res) =>
   });
 });
 
+app.post(
+  '/api/admin/leadership/photo',
+  requireAdmin,
+  leadershipPhotoUpload.single('photo'),
+  (req, res) => {
+    if (!req.file) {
+      res.status(400).json({ error: 'Please select a valid portrait image (JPG, PNG, or WEBP).' });
+      return;
+    }
+
+    const current = db
+      .prepare(`SELECT value FROM settings WHERE key = 'founder_photo_url'`)
+      .get() as { value: string } | undefined;
+    if (current?.value && current.value.startsWith('/api/media/covers/')) {
+      const oldFilename = decodeURIComponent(current.value.slice('/api/media/covers/'.length));
+      deleteStoredFile(COVERS_DIR, oldFilename);
+    }
+
+    const photoUrl = `/api/media/covers/${encodeURIComponent(req.file.filename)}`;
+    db.prepare(
+      `
+      INSERT INTO settings (key, value, updated_at) VALUES ('founder_photo_url', ?, datetime('now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+      `
+    ).run(photoUrl);
+
+    const s = getSettingsMap();
+    res.json({
+      founder_photo_url: photoUrl,
+      settings: {
+        ...getPublicStoreConfig(),
+        has_payment_gateway_secret: Boolean(s.payment_gateway_secret_key),
+      },
+    });
+  }
+);
+
+app.delete('/api/admin/leadership/photo', requireAdmin, (_req, res) => {
+  const current = db
+    .prepare(`SELECT value FROM settings WHERE key = 'founder_photo_url'`)
+    .get() as { value: string } | undefined;
+  if (current?.value && current.value.startsWith('/api/media/covers/')) {
+    const oldFilename = decodeURIComponent(current.value.slice('/api/media/covers/'.length));
+    deleteStoredFile(COVERS_DIR, oldFilename);
+  }
+  db.prepare(
+    `
+    INSERT INTO settings (key, value, updated_at) VALUES ('founder_photo_url', '', datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = '', updated_at = datetime('now')
+    `
+  ).run();
+  const s = getSettingsMap();
+  res.json({
+    founder_photo_url: '',
+    settings: {
+      ...getPublicStoreConfig(),
+      has_payment_gateway_secret: Boolean(s.payment_gateway_secret_key),
+    },
+  });
+});
+
 // Express JSON error handler for /api routes (catches multer upload validation errors cleanly)
 app.use('/api', (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   const message = err instanceof Error ? err.message : 'Internal server error';
@@ -1414,10 +2190,16 @@ app.use('/api', (err: unknown, _req: Request, res: Response, _next: NextFunction
 
 function resolveOrigin(req: Request): string {
   if (process.env.APP_URL && /^https?:\/\//i.test(process.env.APP_URL)) {
-    return process.env.APP_URL;
+    return process.env.APP_URL.replace(/\/+$/, '');
   }
-  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
-  const host = (req.headers['x-forwarded-host'] as string) || req.get('host') || `localhost:${PORT}`;
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim();
+  const forwardedHost = String(req.headers['x-forwarded-host'] || '')
+    .split(',')[0]
+    .trim();
+  const proto = forwardedProto || req.protocol || 'http';
+  const host = forwardedHost || req.get('host') || `localhost:${PORT}`;
   return `${proto}://${host}`;
 }
 

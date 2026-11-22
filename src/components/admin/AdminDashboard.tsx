@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  BarChart3,
   BookCopy,
   Check,
   Edit3,
@@ -8,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquare,
+  Newspaper,
   Package,
   Plus,
   Search,
@@ -31,8 +33,18 @@ import { formatDate, formatPrice } from '../../lib/currency';
 import { BookCoverImage } from '../BookCoverImage';
 import { AdminBookModal } from './AdminBookModal';
 import { AdminSettingsTab } from './AdminSettingsTab';
+import { AdminAnalyticsTab } from './AdminAnalyticsTab';
+import { AdminEditorialTab } from './AdminEditorialTab';
 
-type AdminTab = 'overview' | 'books' | 'categories' | 'orders' | 'inquiries' | 'settings';
+type AdminTab =
+  | 'overview'
+  | 'analytics'
+  | 'books'
+  | 'categories'
+  | 'editorial'
+  | 'orders'
+  | 'inquiries'
+  | 'settings';
 
 interface AdminDashboardProps {
   admin: AdminUser;
@@ -216,8 +228,10 @@ export function AdminDashboard({
 
   const sidebarLinks: Array<{ id: AdminTab; label: string; icon: typeof LayoutDashboard }> = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'books', label: 'Books & Inventory', icon: BookCopy },
     { id: 'categories', label: 'Categories', icon: FolderKanban },
+    { id: 'editorial', label: 'Authors & Updates', icon: Newspaper },
     { id: 'orders', label: 'Orders', icon: Package },
     { id: 'inquiries', label: 'Inquiries', icon: MessageSquare },
     { id: 'settings', label: 'Store & Payment', icon: Settings },
@@ -921,6 +935,17 @@ export function AdminDashboard({
                     </div>
                   )}
                 </div>
+              )}
+
+              {/* TAB 1B: ANALYTICS */}
+              {activeTab === 'analytics' && <AdminAnalyticsTab currency={currency} />}
+
+              {/* TAB 5B: EDITORIAL (AUTHORS & UPDATES) */}
+              {activeTab === 'editorial' && (
+                <AdminEditorialTab
+                  books={books}
+                  onStorefrontDataChanged={onStorefrontDataChanged}
+                />
               )}
 
               {/* TAB 6: STORE & PAYMENT SETTINGS */}

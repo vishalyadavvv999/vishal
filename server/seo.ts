@@ -68,7 +68,7 @@ export function injectSeoIntoHtml(
   const cleanOrigin = origin.replace(/\/+$/, '');
   const cleanPath = requestPath.split('?')[0] || '/';
 
-  let title = `${publisherName} — Publishing House & Book Store`;
+  let title = publisherName;
   let description =
     'Explore verified editions, read sample PDFs, and order books directly from Bhagwati Publications—an independent publishing house.';
   let ogType = 'website';
@@ -169,11 +169,31 @@ export function injectSeoIntoHtml(
     title = `Published Authors & Editors | ${publisherName}`;
     description =
       'Explore the authors, scholars, and editors published by Bhagwati Publications and browse their latest editions.';
+  } else if (cleanPath.startsWith('/authors/')) {
+    const authorSlug = decodeURIComponent(cleanPath.slice('/authors/'.length).replace(/\/+$/, ''));
+    const authorRow = db
+      .prepare(`SELECT name, credentials, affiliation, bio FROM authors WHERE slug = ?`)
+      .get(authorSlug) as
+      | { name: string; credentials: string; affiliation: string; bio: string }
+      | undefined;
+    if (authorRow) {
+      title = `${authorRow.name} — Author Profile | ${publisherName}`;
+      description = truncateDescription(
+        authorRow.bio ||
+          `Explore books, monographs, and verified editions by ${authorRow.name} published by ${publisherName}.`,
+        158
+      );
+      canonicalUrl = `${cleanOrigin}/authors/${authorSlug}`;
+    }
+  } else if (cleanPath === '/updates' || cleanPath.startsWith('/updates/')) {
+    title = `News & Publication Updates | ${publisherName}`;
+    description =
+      'Latest book releases, institutional course adoptions, and editorial announcements from Bhagwati Publications.';
   } else if (cleanPath === '/wishlist') {
     title = `My Wishlist | ${publisherName}`;
     description =
       'Review your saved favorite books from Bhagwati Publications, preview sample PDFs, and add titles to your shopping bag.';
-  } else if (cleanPath === '/support') {
+  } else if (cleanPath === '/support' || cleanPath === '/track-order') {
     title = `Customer Support & Order Tracking | ${publisherName}`;
     description =
       'Contact Bhagwati Publications for book inquiries, institutional bulk orders, WhatsApp assistance, or live order status tracking.';
@@ -248,9 +268,12 @@ export function injectSeoIntoHtml(
 
 export function buildSitemapXml(origin: string): string {
   const cleanOrigin = origin.replace(/\/+$/, '');
-  const staticPaths = ['/', '/catalog', '/new-releases', '/authors', '/support'];
+  const staticPaths = ['/', '/catalog', '/new-releases', '/authors', '/updates', '/support', '/track-order'];
   const books = db
     .prepare(`SELECT slug, updated_at FROM books WHERE is_published = 1 ORDER BY id DESC`)
+    .all() as Array<{ slug: string; updated_at: string }>;
+  const authors = db
+    .prepare(`SELECT slug, updated_at FROM authors ORDER BY name ASC`)
     .all() as Array<{ slug: string; updated_at: string }>;
 
   const urls: string[] = staticPaths.map(
@@ -261,6 +284,15 @@ export function buildSitemapXml(origin: string): string {
     const lastmod = b.updated_at ? b.updated_at.slice(0, 10) : '';
     urls.push(
       `  <url><loc>${escapeHtmlAttr(`${cleanOrigin}/books/${b.slug}`)}</loc>${
+        lastmod ? `<lastmod>${lastmod}</lastmod>` : ''
+      }</url>`
+    );
+  }
+
+  for (const a of authors) {
+    const lastmod = a.updated_at ? a.updated_at.slice(0, 10) : '';
+    urls.push(
+      `  <url><loc>${escapeHtmlAttr(`${cleanOrigin}/authors/${a.slug}`)}</loc>${
         lastmod ? `<lastmod>${lastmod}</lastmod>` : ''
       }</url>`
     );

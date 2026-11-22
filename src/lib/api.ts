@@ -1,8 +1,11 @@
 import type {
+  AdminAnalytics,
   AdminOverview,
   AdminSettings,
   AdminUser,
+  AuthorProfile,
   Book,
+  BookPreviewExcerpt,
   BookReviewsResponse,
   Category,
   CustomerUser,
@@ -11,7 +14,9 @@ import type {
   Order,
   OrderStatus,
   PaymentStatus,
+  PublicationUpdate,
   StoreConfig,
+  UpdateCategory,
 } from '../types';
 
 async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -65,6 +70,18 @@ export const api = {
   },
 
   getBook: (idOrSlug: string | number) => request<Book>(`/api/books/${encodeURIComponent(String(idOrSlug))}`),
+
+  getBookPreviewExcerpt: (bookId: number) =>
+    request<BookPreviewExcerpt>(`/api/books/${bookId}/preview-excerpt`),
+
+  getAuthors: () => request<AuthorProfile[]>('/api/authors'),
+
+  getAuthorProfile: (slug: string) =>
+    request<{ author: AuthorProfile; books: Book[] }>(
+      `/api/authors/${encodeURIComponent(slug)}`
+    ),
+
+  getUpdates: () => request<PublicationUpdate[]>('/api/updates'),
 
   createOrder: (payload: {
     customer_name: string;
@@ -141,6 +158,8 @@ export const api = {
   adminMe: () => request<{ admin: AdminUser }>('/api/admin/me'),
 
   adminOverview: () => request<AdminOverview>('/api/admin/overview'),
+
+  adminAnalytics: () => request<AdminAnalytics>('/api/admin/analytics'),
 
   // Admin books
   adminGetBooks: () => request<Book[]>('/api/admin/books'),
@@ -219,4 +238,72 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+
+  adminUploadLeadershipPhoto: async (file: File) => {
+    const formData = new FormData();
+    formData.append('photo', file);
+    const res = await fetch('/api/admin/leadership/photo', {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to upload portrait');
+    }
+    return data as { founder_photo_url: string; settings: AdminSettings };
+  },
+
+  adminDeleteLeadershipPhoto: () =>
+    request<{ founder_photo_url: string; settings: AdminSettings }>(
+      '/api/admin/leadership/photo',
+      { method: 'DELETE' }
+    ),
+
+  // Admin authors
+  adminGetAuthors: () => request<AuthorProfile[]>('/api/admin/authors'),
+
+  adminUpdateAuthor: (
+    id: number,
+    payload: { credentials: string; affiliation: string; location: string; bio: string }
+  ) =>
+    request<{ author: AuthorProfile }>(`/api/admin/authors/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  // Admin updates & news
+  adminGetUpdates: () => request<PublicationUpdate[]>('/api/admin/updates'),
+
+  adminCreateUpdate: (payload: {
+    title: string;
+    category: UpdateCategory;
+    summary: string;
+    content: string;
+    related_book_id: number | null;
+    is_published: boolean;
+  }) =>
+    request<{ update: PublicationUpdate }>('/api/admin/updates', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  adminUpdateUpdate: (
+    id: number,
+    payload: {
+      title: string;
+      category: UpdateCategory;
+      summary: string;
+      content: string;
+      related_book_id: number | null;
+      is_published: boolean;
+    }
+  ) =>
+    request<{ update: PublicationUpdate }>(`/api/admin/updates/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  adminDeleteUpdate: (id: number) =>
+    request<{ ok: boolean }>(`/api/admin/updates/${id}`, { method: 'DELETE' }),
 };

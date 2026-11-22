@@ -147,6 +147,32 @@ export function initializeDatabase(): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(book_id, customer_id)
     );
+
+    CREATE TABLE IF NOT EXISTS authors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      slug TEXT NOT NULL UNIQUE,
+      credentials TEXT NOT NULL DEFAULT '',
+      affiliation TEXT NOT NULL DEFAULT '',
+      location TEXT NOT NULL DEFAULT '',
+      bio TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS publication_updates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      category TEXT NOT NULL DEFAULT 'announcement',
+      summary TEXT NOT NULL,
+      content TEXT NOT NULL,
+      related_book_id INTEGER REFERENCES books(id) ON DELETE SET NULL,
+      is_published INTEGER NOT NULL DEFAULT 1,
+      published_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Seed default store settings if absent (no fake company contact info!)
@@ -166,6 +192,13 @@ export function initializeDatabase(): void {
     payment_gateway_public_key: '',
     payment_gateway_secret_key: '',
     payment_gateway_mode: 'test',
+    founder_name: 'Dr. S.B. Saraswat',
+    founder_designation: 'Director & Managing Head · Bhagwati Publications',
+    founder_credentials:
+      'Ph.D. · B.E. (Electrical & Industrial Engineering) · PG in ADR, Public Administration & Materials Management · ISO-9000 & High-Tension Electrical Certified',
+    founder_bio:
+      'Dr. S.B. Saraswat brings decades of international industrial leadership, institutional governance, and technical scholarship to Bhagwati Publications. He serves as Resident Director at Danieli Corus (Netherlands) and previously held senior executive appointments as Joint Director (Technical/Materials) at Steel Authority of India Limited (SAIL) and Director of Supply Chain Management at Global Steel Sofia (Europe).\n\nUnder his editorial stewardship, Bhagwati Publications advances rigorous academic, engineering, heritage, and management publishing for scholars, universities, and professional libraries.',
+    founder_photo_url: '',
   };
 
   const insertSetting = db.prepare(
@@ -347,6 +380,95 @@ export function initializeDatabase(): void {
         b.is_featured,
         b.is_new_arrival
       );
+    }
+  }
+
+  // Ensure every published or drafted book author has an Author Profile row
+  syncAuthorsFromBooks();
+
+  // Seed initial factual publication updates if empty
+  const updateCount = (
+    db.prepare(`SELECT COUNT(*) as cnt FROM publication_updates`).get() as { cnt: number }
+  ).cnt;
+  if (updateCount === 0) {
+    const firstBook = db
+      .prepare(`SELECT id, title FROM books ORDER BY id ASC LIMIT 1`)
+      .get() as { id: number; title: string } | undefined;
+    const secondBook = db
+      .prepare(`SELECT id, title FROM books ORDER BY id ASC LIMIT 1 OFFSET 1`)
+      .get() as { id: number; title: string } | undefined;
+
+    const insertUpdate = db.prepare(`
+      INSERT INTO publication_updates (
+        title, slug, category, summary, content, related_book_id, is_published, published_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'))
+    `);
+
+    if (firstBook) {
+      insertUpdate.run(
+        `New Hardcover Release: ${firstBook.title}`,
+        'new-release-architectural-harmony',
+        'new-release',
+        'Our latest illustrated hardcover monograph is now available for direct ordering with an interactive chapter preview.',
+        `Bhagwati Publications announces the release of "${firstBook.title}". Readers and academic libraries can now inspect the interactive digital preview, verify ISBN-13 specifications, and place direct individual or institutional orders through the storefront.`,
+        firstBook.id
+      );
+    }
+
+    if (secondBook) {
+      insertUpdate.run(
+        `University Course Adoption: ${secondBook.title}`,
+        'course-adoption-classical-inheritance',
+        'announcement',
+        'Available for bulk university and departmental library acquisitions with dedicated WhatsApp inquiry support.',
+        `Institutions and faculty considering "${secondBook.title}" for upcoming semester syllabi can review sample excerpts online and request bulk institutional pricing directly through our Customer Support desk or WhatsApp inquiry channel.`,
+        secondBook.id
+      );
+    }
+
+    insertUpdate.run(
+      'Interactive Digital Book Reader & Bilingual Storefront Now Live',
+      'interactive-digital-reader-bilingual-storefront',
+      'press',
+      'Browse our complete catalog in English or Hindi, preview sample pages interactively, and track shipments online.',
+      'To serve scholars, libraries, and general readers more effectively, Bhagwati Publications now offers an interactive digital excerpt reader alongside original sample PDFs, bilingual English and Hindi storefront navigation, saved wishlists, and real-time order tracking.',
+      null
+    );
+  }
+}
+
+export function ensureUniqueAuthorSlug(name: string, excludeId?: number): string {
+  const base = slugify(name);
+  let candidate = base;
+  let counter = 1;
+  while (true) {
+    const existing = excludeId
+      ? (db.prepare(`SELECT id FROM authors WHERE slug = ? AND id != ?`).get(candidate, excludeId) as
+          | { id: number }
+          | undefined)
+      : (db.prepare(`SELECT id FROM authors WHERE slug = ?`).get(candidate) as
+          | { id: number }
+          | undefined);
+    if (!existing) return candidate;
+    counter += 1;
+    candidate = `${base}-${counter}`;
+  }
+}
+
+export function syncAuthorsFromBooks(): void {
+  const rows = db
+    .prepare(`SELECT DISTINCT TRIM(author) as author_name FROM books WHERE TRIM(author) != ''`)
+    .all() as Array<{ author_name: string }>;
+
+  const findByName = db.prepare(`SELECT id FROM authors WHERE LOWER(name) = LOWER(?)`);
+  const insertAuthor = db.prepare(
+    `INSERT INTO authors (name, slug) VALUES (?, ?)`
+  );
+
+  for (const r of rows) {
+    const existing = findByName.get(r.author_name);
+    if (!existing) {
+      insertAuthor.run(r.author_name, ensureUniqueAuthorSlug(r.author_name));
     }
   }
 }

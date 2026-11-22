@@ -1,11 +1,55 @@
-import { useState } from 'react';
-import { CheckCircle2, CreditCard, KeyRound, Save, Store } from 'lucide-react';
+import { useRef, useState } from 'react';
+import {
+  CheckCircle2,
+  CreditCard,
+  KeyRound,
+  Save,
+  Store,
+  Trash2,
+  Upload,
+  UserCheck,
+} from 'lucide-react';
 import type { AdminSettings, CurrencyCode, PaymentGatewayProvider } from '../../types';
 import { api } from '../../lib/api';
 
 interface AdminSettingsTabProps {
   settings: AdminSettings;
   onUpdated: (settings: AdminSettings) => void;
+}
+
+async function createPortraitCropFile(sourceFile: File): Promise<File> {
+  const bitmapUrl = URL.createObjectURL(sourceFile);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Could not decode selected image'));
+      el.src = bitmapUrl;
+    });
+
+    // Pure rectangular pixel crop that trims magazine top header and right-side text column
+    // without touching or altering the portrait face or natural appearance.
+    const sx = Math.round(img.naturalWidth * 0.01);
+    const sy = Math.round(img.naturalHeight * 0.12);
+    const sw = Math.max(100, Math.round(img.naturalWidth * 0.61));
+    const sh = Math.max(100, Math.round(img.naturalHeight * 0.84));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = sw;
+    canvas.height = sh;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return sourceFile;
+
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.94)
+    );
+    if (!blob) return sourceFile;
+    return new File([blob], 'leadership_portrait_cropped.jpg', { type: 'image/jpeg' });
+  } finally {
+    URL.revokeObjectURL(bitmapUrl);
+  }
 }
 
 export function AdminSettingsTab({ settings, onUpdated }: AdminSettingsTabProps) {
@@ -17,6 +61,18 @@ export function AdminSettingsTab({ settings, onUpdated }: AdminSettingsTabProps)
   const [currency, setCurrency] = useState<CurrencyCode>(settings.currency);
   const [freeThreshold, setFreeThreshold] = useState(String(settings.free_shipping_threshold));
   const [standardFee, setStandardFee] = useState(String(settings.standard_shipping_fee));
+
+  // Leadership Profile fields
+  const [founderName, setFounderName] = useState(settings.founder_name || 'Dr. S.B. Saraswat');
+  const [founderDesignation, setFounderDesignation] = useState(
+    settings.founder_designation || 'Director & Managing Head · Bhagwati Publications'
+  );
+  const [founderCredentials, setFounderCredentials] = useState(settings.founder_credentials || '');
+  const [founderBio, setFounderBio] = useState(settings.founder_bio || '');
+  const [founderPhotoUrl, setFounderPhotoUrl] = useState(settings.founder_photo_url || '');
+  const [trimMagazineColumn, setTrimMagazineColumn] = useState(true);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
 
   const [codEnabled, setCodEnabled] = useState(settings.payment_cod_enabled);
   const [upiEnabled, setUpiEnabled] = useState(settings.payment_upi_enabled);
@@ -35,6 +91,44 @@ export function AdminSettingsTab({ settings, onUpdated }: AdminSettingsTabProps)
   const [error, setError] = useState('');
   const [savedNotice, setSavedNotice] = useState('');
 
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+    setError('');
+    setSavedNotice('');
+    setUploadingPhoto(true);
+    try {
+      const fileToUpload = trimMagazineColumn
+        ? await createPortraitCropFile(selected)
+        : selected;
+      const res = await api.adminUploadLeadershipPhoto(fileToUpload);
+      setFounderPhotoUrl(res.founder_photo_url);
+      setSavedNotice('Original leadership portrait uploaded and applied to homepage.');
+      onUpdated(res.settings);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to upload portrait image');
+    } finally {
+      setUploadingPhoto(false);
+      if (photoInputRef.current) photoInputRef.current.value = '';
+    }
+  };
+
+  const handleRemovePhoto = async () => {
+    setError('');
+    setSavedNotice('');
+    setUploadingPhoto(true);
+    try {
+      const res = await api.adminDeleteLeadershipPhoto();
+      setFounderPhotoUrl('');
+      setSavedNotice('Leadership portrait removed.');
+      onUpdated(res.settings);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove portrait');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -51,6 +145,10 @@ export function AdminSettingsTab({ settings, onUpdated }: AdminSettingsTabProps)
         currency,
         free_shipping_threshold: Number(freeThreshold) || 0,
         standard_shipping_fee: Number(standardFee) || 0,
+        founder_name: founderName.trim() || 'Dr. S.B. Saraswat',
+        founder_designation: founderDesignation.trim(),
+        founder_credentials: founderCredentials.trim(),
+        founder_bio: founderBio.trim(),
         payment_cod_enabled: codEnabled,
         payment_upi_enabled: upiEnabled,
         payment_upi_id: upiId.trim(),
@@ -88,12 +186,137 @@ export function AdminSettingsTab({ settings, onUpdated }: AdminSettingsTabProps)
         </div>
       )}
 
+      {/* Leadership & Founder Profile Configuration */}
+      <div className="bg-white border border-slate-200 rounded-lg p-6 space-y-5">
+        <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+          <UserCheck className="w-4 h-4 text-[#9F7918]" />
+          <h2 className="font-serif text-lg font-bold text-[#0B192C]">
+            Founder &amp; Leadership Homepage Profile
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+          {/* Portrait Uploader */}
+          <div className="md:col-span-4 space-y-3">
+            <div className="aspect-[4/5] w-full max-w-[220px] rounded-md overflow-hidden border border-slate-300 bg-[#0B192C] flex items-center justify-center">
+              {founderPhotoUrl ? (
+                <img
+                  src={founderPhotoUrl}
+                  alt={founderName}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover object-top"
+                />
+              ) : (
+                <span className="text-xs text-slate-300 px-4 text-center">
+                  No portrait uploaded yet
+                </span>
+              )}
+            </div>
+
+            <label className="flex items-start gap-2 text-xs text-slate-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={trimMagazineColumn}
+                onChange={(e) => setTrimMagazineColumn(e.target.checked)}
+                className="accent-[#0B192C] mt-0.5"
+              />
+              <span>
+                Auto-crop right text column &amp; top margin on magazine scan (preserves face unaltered)
+              </span>
+            </label>
+
+            <div className="flex flex-wrap gap-2">
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handlePhotoUpload}
+                className="hidden"
+                id="leadership-photo-input"
+              />
+              <label
+                htmlFor="leadership-photo-input"
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-[#0B192C] text-white text-xs font-semibold rounded-md hover:bg-[#132642] cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5 text-[#DFC166]" />
+                <span>{uploadingPhoto ? 'Uploading...' : 'Upload Portrait'}</span>
+              </label>
+
+              {founderPhotoUrl && (
+                <button
+                  type="button"
+                  disabled={uploadingPhoto}
+                  onClick={handleRemovePhoto}
+                  className="inline-flex items-center gap-1 px-2.5 py-2 border border-rose-200 text-rose-700 text-xs font-medium rounded-md hover:bg-rose-50 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Remove</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Name, Designation, Bio */}
+          <div className="md:col-span-8 grid grid-cols-1 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Director / Founder Full Name
+                </label>
+                <input
+                  type="text"
+                  value={founderName}
+                  onChange={(e) => setFounderName(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Official Designation
+                </label>
+                <input
+                  type="text"
+                  value={founderDesignation}
+                  onChange={(e) => setFounderDesignation(e.target.value)}
+                  placeholder="e.g. Director & Managing Head"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Academic &amp; Professional Credentials
+              </label>
+              <input
+                type="text"
+                value={founderCredentials}
+                onChange={(e) => setFounderCredentials(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Leadership Biography
+              </label>
+              <textarea
+                rows={4}
+                value={founderBio}
+                onChange={(e) => setFounderBio(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Storefront & Contact Configuration */}
       <div className="bg-white border border-slate-200 rounded-lg p-6 space-y-5">
         <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
           <Store className="w-4 h-4 text-[#9F7918]" />
           <h2 className="font-serif text-lg font-bold text-[#0B192C]">
-            Publisher Details & Storefront Shipping
+            Publisher Details &amp; Storefront Shipping
           </h2>
         </div>
 

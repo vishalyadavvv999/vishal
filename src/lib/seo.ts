@@ -1,4 +1,4 @@
-import type { Book, StoreConfig } from '../types';
+import type { AuthorProfile, Book, StoreConfig } from '../types';
 import type { AppView } from '../components/Navbar';
 
 const DEFAULT_HERO_IMAGE = '/src/assets/images/hero_publishing_books_1794839640362.jpg';
@@ -57,6 +57,7 @@ function upsertJsonLd(data: Record<string, unknown>): void {
 export function applySeoMetadata(params: {
   view: AppView;
   book: Book | null;
+  author?: AuthorProfile | null;
   storeConfig: StoreConfig;
 }): void {
   const publisherName = params.storeConfig.publisher_name || 'Bhagwati Publications';
@@ -131,7 +132,44 @@ export function applySeoMetadata(params: {
   removeMeta('property', 'book:author');
   removeMeta('property', 'book:isbn');
 
-  let pageTitle = `${publisherName} — Publishing House & Book Store`;
+  if (params.view === 'author' && params.author) {
+    const author = params.author;
+    const title = `${author.name} — Published Author | ${publisherName}`;
+    const description = truncateDescription(
+      author.bio ||
+        `${author.name}${author.credentials ? ` (${author.credentials})` : ''} — published author at ${publisherName}.`,
+      158
+    );
+    const canonicalUrl = `${window.location.origin}/authors/${author.slug}`;
+    const heroImage = toAbsoluteUrl(DEFAULT_HERO_IMAGE);
+
+    document.title = title;
+    upsertMeta('name', 'description', description);
+    upsertCanonical(canonicalUrl);
+    upsertMeta('property', 'og:type', 'profile');
+    upsertMeta('property', 'og:site_name', publisherName);
+    upsertMeta('property', 'og:title', title);
+    upsertMeta('property', 'og:description', description);
+    upsertMeta('property', 'og:url', canonicalUrl);
+    upsertMeta('property', 'og:image', heroImage);
+    upsertMeta('name', 'twitter:card', 'summary_large_image');
+    upsertMeta('name', 'twitter:title', title);
+    upsertMeta('name', 'twitter:description', description);
+    upsertMeta('name', 'twitter:image', heroImage);
+    upsertJsonLd({
+      '@context': 'https://schema.org',
+      '@type': 'Person',
+      name: author.name,
+      description,
+      affiliation: author.affiliation
+        ? { '@type': 'Organization', name: author.affiliation }
+        : undefined,
+      url: canonicalUrl,
+    });
+    return;
+  }
+
+  let pageTitle = publisherName;
   let pageDesc =
     'Explore verified editions, read sample PDFs, and order books directly from Bhagwati Publications—an independent publishing house.';
 
@@ -143,10 +181,14 @@ export function applySeoMetadata(params: {
     pageTitle = `New Releases | ${publisherName}`;
     pageDesc =
       'Discover new releases and recent hardcover and academic publications from Bhagwati Publications with sample PDF previews.';
-  } else if (params.view === 'authors') {
+  } else if (params.view === 'authors' || params.view === 'author') {
     pageTitle = `Published Authors & Editors | ${publisherName}`;
     pageDesc =
       'Explore the authors, scholars, and editors published by Bhagwati Publications and browse their latest editions.';
+  } else if (params.view === 'updates') {
+    pageTitle = `News & Publication Updates | ${publisherName}`;
+    pageDesc =
+      'Official publishing announcements, new print releases, and academic press dispatches from Bhagwati Publications.';
   } else if (params.view === 'wishlist') {
     pageTitle = `My Wishlist | ${publisherName}`;
     pageDesc =

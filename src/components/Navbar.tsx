@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Menu, ShoppingBag, X } from 'lucide-react';
+import { useLanguage } from '../lib/i18n';
 
 export type AppView =
   | 'home'
   | 'catalog'
   | 'new-arrivals'
   | 'authors'
+  | 'author'
+  | 'updates'
   | 'wishlist'
   | 'categories'
   | 'book'
@@ -28,17 +31,19 @@ export function Navbar({
   onOpenCart,
 }: NavbarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { t } = useLanguage();
 
   const navItems: Array<{ id: AppView; label: string }> = [
-    { id: 'catalog', label: 'Catalog' },
-    { id: 'new-arrivals', label: 'New Releases' },
-    { id: 'authors', label: 'Authors' },
+    { id: 'catalog', label: t('navCatalog') },
+    { id: 'new-arrivals', label: t('navNewReleases') },
+    { id: 'authors', label: t('navAuthors') },
+    { id: 'updates', label: t('navUpdates') },
     {
       id: 'wishlist',
-      label: wishlistCount > 0 ? `My Wishlist (${wishlistCount})` : 'My Wishlist',
+      label: wishlistCount > 0 ? `${t('navWishlist')} (${wishlistCount})` : t('navWishlist'),
     },
-    { id: 'support', label: 'Support' },
-    { id: 'admin', label: 'Admin' },
+    { id: 'support', label: t('navSupport') },
+    { id: 'admin', label: t('navAdmin') },
   ];
 
   const handleNav = (view: AppView) => {
@@ -55,13 +60,14 @@ export function Navbar({
           onClick={() => handleNav('home')}
           className="font-serif text-xl font-bold tracking-tight text-[#0B192C] hover:text-[#132642] transition-colors whitespace-nowrap shrink-0 text-left cursor-pointer"
         >
-          Bhagwati Publications
+          {t('brandName')}
         </button>
 
         {/* Zone 2: Clean single-line navigation links */}
-        <nav aria-label="Primary Navigation" className="hidden lg:flex items-center gap-6">
+        <nav aria-label="Primary Navigation" className="hidden lg:flex items-center gap-5">
           {navItems.map((item) => {
-            const isActive = currentView === item.id;
+            const isActive =
+              currentView === item.id || (item.id === 'authors' && currentView === 'author');
             return (
               <button
                 key={item.id}
@@ -87,7 +93,7 @@ export function Navbar({
             className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B192C] text-white text-sm font-medium rounded-md hover:bg-[#132642] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             <ShoppingBag className="w-4 h-4 text-[#DFC166]" strokeWidth={1.75} />
-            <span>Bag</span>
+            <span>{t('navBag')}</span>
             <span className="font-mono text-xs tabular-nums text-[#DFC166]">({cartCount})</span>
           </button>
 
@@ -110,7 +116,7 @@ export function Navbar({
               type="button"
               onClick={() => handleNav(item.id)}
               className={`block w-full text-left px-3 py-2.5 rounded-md text-sm font-medium cursor-pointer ${
-                currentView === item.id
+                currentView === item.id || (item.id === 'authors' && currentView === 'author')
                   ? 'bg-[#0B192C] text-white'
                   : 'text-slate-700 hover:bg-slate-100'
               }`}

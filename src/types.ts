@@ -17,6 +17,11 @@ export interface StoreConfig {
   payment_gateway_provider: PaymentGatewayProvider;
   payment_gateway_public_key: string;
   payment_gateway_mode: 'test' | 'live';
+  founder_name: string;
+  founder_designation: string;
+  founder_credentials: string;
+  founder_bio: string;
+  founder_photo_url: string;
 }
 
 export interface AdminSettings extends StoreConfig {
@@ -37,6 +42,7 @@ export interface Book {
   title: string;
   slug: string;
   author: string;
+  author_slug?: string;
   isbn: string;
   description: string;
   price: number;
@@ -55,6 +61,8 @@ export interface Book {
   is_featured: boolean;
   is_new_arrival: boolean;
   is_published: boolean;
+  average_rating?: number;
+  review_count?: number;
   created_at: string;
   updated_at?: string;
 }
@@ -130,6 +138,90 @@ export interface AdminOverview {
   pending_orders: number;
   total_revenue: number;
   open_inquiries: number;
+}
+
+export interface AdminAnalytics {
+  kpis: {
+    net_revenue: number;
+    avg_order_value: number;
+    total_units_sold: number;
+    total_stock_units: number;
+    inventory_retail_value: number;
+    low_stock_titles: number;
+    total_reviews: number;
+    average_rating: number;
+  };
+  monthly_revenue: Array<{ month: string; order_count: number; revenue: number }>;
+  order_status_breakdown: Array<{ status: string; count: number }>;
+  payment_method_breakdown: Array<{ method: string; count: number; revenue: number }>;
+  category_performance: Array<{
+    id: number;
+    name: string;
+    book_count: number;
+    stock_units: number;
+    units_sold: number;
+    revenue: number;
+  }>;
+  top_books: Array<{
+    id: number;
+    title: string;
+    author: string;
+    price: number;
+    stock_quantity: number;
+    units_sold: number;
+    revenue: number;
+    average_rating: number;
+    review_count: number;
+  }>;
+  inquiry_channels: Array<{ channel: string; count: number }>;
+}
+
+export interface AuthorProfile {
+  id: number;
+  name: string;
+  slug: string;
+  credentials: string;
+  affiliation: string;
+  location: string;
+  bio: string;
+  book_count: number;
+  subjects?: string[];
+  languages?: string[];
+  featured_title?: string;
+  created_at: string;
+}
+
+export type UpdateCategory = 'new-release' | 'announcement' | 'event' | 'press';
+
+export interface PublicationUpdate {
+  id: number;
+  title: string;
+  slug: string;
+  category: UpdateCategory;
+  summary: string;
+  content: string;
+  related_book_id: number | null;
+  related_book_title?: string | null;
+  related_book_slug?: string | null;
+  is_published: boolean;
+  published_at: string;
+  created_at: string;
+}
+
+export interface BookPreviewPage {
+  page_number: number;
+  chapter_title: string;
+  kind: 'title' | 'synopsis' | 'excerpt';
+  paragraphs: string[];
+}
+
+export interface BookPreviewExcerpt {
+  book_id: number;
+  title: string;
+  author: string;
+  isbn: string;
+  has_sample_pdf: boolean;
+  pages: BookPreviewPage[];
 }
 
 export interface CustomerUser {

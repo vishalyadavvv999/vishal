@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   AdminUser,
+  AuthorProfile,
   Book,
   CartItem,
   Category,
   CustomerUser,
+  PublicationUpdate,
   StoreConfig,
 } from './types';
 import { api } from './lib/api';
@@ -13,6 +15,8 @@ import { Navbar, type AppView } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { HomeView } from './components/HomeView';
 import { BookDetailView } from './components/BookDetailView';
+import { AuthorProfileView } from './components/AuthorProfileView';
+import { UpdatesView } from './components/UpdatesView';
 import { WishlistView } from './components/WishlistView';
 import { SupportView } from './components/SupportView';
 import { CartDrawer } from './components/CartDrawer';
@@ -38,38 +42,59 @@ const DEFAULT_STORE_CONFIG: StoreConfig = {
   payment_gateway_provider: 'none',
   payment_gateway_public_key: '',
   payment_gateway_mode: 'test',
+  founder_name: 'Dr. S.B. Saraswat',
+  founder_designation: 'Director & Managing Head · Bhagwati Publications',
+  founder_credentials:
+    'Ph.D. · B.E. (Electrical & Industrial Engineering) · PG in ADR, Public Administration & Materials Management · ISO-9000 & High-Tension Electrical Certified',
+  founder_bio:
+    'Dr. S.B. Saraswat brings decades of international industrial leadership, institutional governance, and technical scholarship to Bhagwati Publications. He serves as Resident Director at Danieli Corus (Netherlands) and previously held senior executive appointments as Joint Director (Technical/Materials) at Steel Authority of India Limited (SAIL) and Director of Supply Chain Management at Global Steel Sofia (Europe).\n\nUnder his editorial stewardship, Bhagwati Publications advances rigorous academic, engineering, heritage, and management publishing for scholars, universities, and professional libraries.',
+  founder_photo_url: '',
 };
 
 const CART_STORAGE_KEY = 'bhagwati_publications_cart_v1';
 const WISHLIST_STORAGE_KEY = 'bhagwati_publications_wishlist_v1';
 
-const VIEW_TO_PATH: Record<Exclude<AppView, 'book'>, string> = {
+const VIEW_TO_PATH: Record<Exclude<AppView, 'book' | 'author'>, string> = {
   home: '/',
   catalog: '/catalog',
   'new-arrivals': '/new-releases',
   authors: '/authors',
+  updates: '/updates',
   wishlist: '/wishlist',
   categories: '/categories',
   support: '/support',
   admin: '/admin',
 };
 
-function parseRouteFromLocation(): { view: AppView; bookSlugOrId: string | null } {
+function parseRouteFromLocation(): {
+  view: AppView;
+  bookSlugOrId: string | null;
+  authorSlug: string | null;
+} {
   const path = window.location.pathname.replace(/\/+$/, '') || '/';
   if (path.startsWith('/books/')) {
     const slugOrId = decodeURIComponent(path.slice('/books/'.length));
-    if (slugOrId) return { view: 'book', bookSlugOrId: slugOrId };
+    if (slugOrId) return { view: 'book', bookSlugOrId: slugOrId, authorSlug: null };
   }
-  if (path === '/catalog') return { view: 'catalog', bookSlugOrId: null };
+  if (path.startsWith('/authors/')) {
+    const authorSlug = decodeURIComponent(path.slice('/authors/'.length));
+    if (authorSlug) return { view: 'author', bookSlugOrId: null, authorSlug };
+  }
+  if (path === '/catalog') return { view: 'catalog', bookSlugOrId: null, authorSlug: null };
   if (path === '/new-releases' || path === '/new-arrivals') {
-    return { view: 'new-arrivals', bookSlugOrId: null };
+    return { view: 'new-arrivals', bookSlugOrId: null, authorSlug: null };
   }
-  if (path === '/authors') return { view: 'authors', bookSlugOrId: null };
-  if (path === '/wishlist') return { view: 'wishlist', bookSlugOrId: null };
-  if (path === '/categories') return { view: 'categories', bookSlugOrId: null };
-  if (path === '/support') return { view: 'support', bookSlugOrId: null };
-  if (path === '/admin') return { view: 'admin', bookSlugOrId: null };
-  return { view: 'home', bookSlugOrId: null };
+  if (path === '/authors') return { view: 'authors', bookSlugOrId: null, authorSlug: null };
+  if (path === '/updates' || path.startsWith('/updates/')) {
+    return { view: 'updates', bookSlugOrId: null, authorSlug: null };
+  }
+  if (path === '/wishlist') return { view: 'wishlist', bookSlugOrId: null, authorSlug: null };
+  if (path === '/categories') return { view: 'categories', bookSlugOrId: null, authorSlug: null };
+  if (path === '/support' || path === '/track-order') {
+    return { view: 'support', bookSlugOrId: null, authorSlug: null };
+  }
+  if (path === '/admin') return { view: 'admin', bookSlugOrId: null, authorSlug: null };
+  return { view: 'home', bookSlugOrId: null, authorSlug: null };
 }
 
 export default function App() {
@@ -77,10 +102,18 @@ export default function App() {
   const [currentView, setCurrentView] = useState<AppView>(initialRoute.view);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [pendingBookSlug, setPendingBookSlug] = useState<string | null>(initialRoute.bookSlugOrId);
+  const [selectedAuthor, setSelectedAuthor] = useState<AuthorProfile | null>(null);
+  const [selectedAuthorBooks, setSelectedAuthorBooks] = useState<Book[]>([]);
+  const [pendingAuthorSlug, setPendingAuthorSlug] = useState<string | null>(
+    initialRoute.authorSlug
+  );
+  const [loadingAuthor, setLoadingAuthor] = useState(false);
 
   const [storeConfig, setStoreConfig] = useState<StoreConfig>(DEFAULT_STORE_CONFIG);
   const [books, setBooks] = useState<Book[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [authors, setAuthors] = useState<AuthorProfile[]>([]);
+  const [updates, setUpdates] = useState<PublicationUpdate[]>([]);
   const [loadingCatalog, setLoadingCatalog] = useState(true);
 
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -132,14 +165,18 @@ export default function App() {
   const loadStorefront = useCallback(async () => {
     setLoadingCatalog(true);
     try {
-      const [configRes, booksRes, categoriesRes] = await Promise.all([
+      const [configRes, booksRes, categoriesRes, authorsRes, updatesRes] = await Promise.all([
         api.getStoreConfig(),
         api.getBooks(),
         api.getCategories(),
+        api.getAuthors().catch(() => [] as AuthorProfile[]),
+        api.getUpdates().catch(() => [] as PublicationUpdate[]),
       ]);
       setStoreConfig(configRes);
       setBooks(booksRes);
       setCategories(categoriesRes);
+      setAuthors(authorsRes);
+      setUpdates(updatesRes);
       setSelectedBook((prev) => {
         if (!prev) return null;
         return booksRes.find((b) => b.id === prev.id) || prev;
@@ -199,6 +236,36 @@ export default function App() {
     };
   }, [pendingBookSlug, books, loadingCatalog]);
 
+  // Resolve deep-linked /authors/:slug on initial load or popstate
+  useEffect(() => {
+    if (!pendingAuthorSlug) return;
+    let cancelled = false;
+    setLoadingAuthor(true);
+    api
+      .getAuthorProfile(pendingAuthorSlug)
+      .then((res) => {
+        if (!cancelled) {
+          setSelectedAuthor(res.author);
+          setSelectedAuthorBooks(res.books);
+          setCurrentView('author');
+          setPendingAuthorSlug(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSelectedAuthor(null);
+          setSelectedAuthorBooks([]);
+          setPendingAuthorSlug(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingAuthor(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingAuthorSlug]);
+
   // Browser back/forward button support
   useEffect(() => {
     const onPopState = () => {
@@ -209,6 +276,13 @@ export default function App() {
       } else {
         setPendingBookSlug(null);
         setSelectedBook(null);
+      }
+      if (route.view === 'author' && route.authorSlug) {
+        setPendingAuthorSlug(route.authorSlug);
+      } else {
+        setPendingAuthorSlug(null);
+        setSelectedAuthor(null);
+        setSelectedAuthorBooks([]);
       }
       if (route.view === 'admin') {
         checkAdminSession();
@@ -223,9 +297,10 @@ export default function App() {
     applySeoMetadata({
       view: currentView,
       book: selectedBook,
+      author: selectedAuthor,
       storeConfig,
     });
-  }, [currentView, selectedBook, storeConfig]);
+  }, [currentView, selectedBook, selectedAuthor, storeConfig]);
 
   useEffect(() => {
     try {
@@ -237,9 +312,11 @@ export default function App() {
 
   const handleNavigate = (view: AppView) => {
     setCurrentView(view);
-    if (view !== 'book') {
+    if (view !== 'book' && view !== 'author') {
       setSelectedBook(null);
       setPendingBookSlug(null);
+      setSelectedAuthor(null);
+      setPendingAuthorSlug(null);
       const nextPath = VIEW_TO_PATH[view];
       if (window.location.pathname !== nextPath) {
         window.history.pushState({}, '', nextPath);
@@ -254,6 +331,8 @@ export default function App() {
   const handleSelectBook = async (book: Book) => {
     setSelectedBook(book);
     setPendingBookSlug(null);
+    setSelectedAuthor(null);
+    setPendingAuthorSlug(null);
     setCurrentView('book');
     const nextPath = `/books/${encodeURIComponent(book.slug)}`;
     if (window.location.pathname !== nextPath) {
@@ -265,6 +344,36 @@ export default function App() {
       setSelectedBook(fresh);
     } catch {
       // keep existing book snapshot
+    }
+  };
+
+  const handleSelectAuthor = async (authorSlug: string) => {
+    if (!authorSlug) return;
+    setSelectedBook(null);
+    setPendingBookSlug(null);
+    setCurrentView('author');
+    setLoadingAuthor(true);
+    const localAuthor = authors.find((a) => a.slug === authorSlug) || null;
+    if (localAuthor) {
+      setSelectedAuthor(localAuthor);
+      setSelectedAuthorBooks(books.filter((b) => b.author_slug === authorSlug));
+    }
+    const nextPath = `/authors/${encodeURIComponent(authorSlug)}`;
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      const res = await api.getAuthorProfile(authorSlug);
+      setSelectedAuthor(res.author);
+      setSelectedAuthorBooks(res.books);
+    } catch {
+      if (!localAuthor) {
+        setSelectedAuthor(null);
+        setSelectedAuthorBooks([]);
+      }
+    } finally {
+      setLoadingAuthor(false);
     }
   };
 
@@ -368,18 +477,6 @@ export default function App() {
     [cart]
   );
 
-  const relatedBooks = useMemo(() => {
-    if (!selectedBook) return [];
-    return books
-      .filter((b) => b.id !== selectedBook.id)
-      .sort((a, b) => {
-        const aSame = a.category_id === selectedBook.category_id ? 0 : 1;
-        const bSame = b.category_id === selectedBook.category_id ? 0 : 1;
-        return aSame - bSame;
-      })
-      .slice(0, 3);
-  }, [books, selectedBook]);
-
   return (
     <div className="min-h-screen flex flex-col bg-[#F9FAFB] text-[#0B192C]">
       <Navbar
@@ -398,25 +495,56 @@ export default function App() {
           currentView === 'categories') && (
           <HomeView
             viewMode={currentView}
+            storeConfig={storeConfig}
             books={books}
             categories={categories}
+            authors={authors}
+            updates={updates}
             loading={loadingCatalog}
             currency={storeConfig.currency}
             wishlistIds={wishlistIds}
             onToggleWishlist={toggleWishlist}
             onNavigate={handleNavigate}
             onSelectBook={handleSelectBook}
+            onSelectAuthor={handleSelectAuthor}
             onAddToCart={(b) => addToCart(b, 1)}
             onPreviewSample={(b) => setPreviewBook(b)}
+          />
+        )}
+
+        {currentView === 'author' && (
+          <AuthorProfileView
+            author={selectedAuthor}
+            books={selectedAuthorBooks}
+            loading={loadingAuthor}
+            currency={storeConfig.currency}
+            wishlistIds={wishlistIds}
+            onToggleWishlist={toggleWishlist}
+            onBackToAuthors={() => handleNavigate('authors')}
+            onSelectBook={handleSelectBook}
+            onAddToCart={(b) => addToCart(b, 1)}
+            onPreviewSample={(b) => setPreviewBook(b)}
+          />
+        )}
+
+        {currentView === 'updates' && (
+          <UpdatesView
+            updates={updates}
+            books={books}
+            loading={loadingCatalog}
+            onSelectBook={handleSelectBook}
           />
         )}
 
         {currentView === 'wishlist' && (
           <WishlistView
             books={wishlist}
+            allBooks={books}
             currency={storeConfig.currency}
+            wishlistIds={wishlistIds}
             onNavigate={handleNavigate}
             onSelectBook={handleSelectBook}
+            onSelectAuthor={handleSelectAuthor}
             onAddToCart={(b) => addToCart(b, 1)}
             onPreviewSample={(b) => setPreviewBook(b)}
             onToggleWishlist={toggleWishlist}
@@ -428,7 +556,7 @@ export default function App() {
         {currentView === 'book' && selectedBook && (
           <BookDetailView
             book={selectedBook}
-            relatedBooks={relatedBooks}
+            allBooks={books}
             currency={storeConfig.currency}
             wishlistIds={wishlistIds}
             customer={customerUser}
@@ -446,6 +574,7 @@ export default function App() {
             onToggleWishlist={toggleWishlist}
             onBack={() => handleNavigate('catalog')}
             onSelectBook={handleSelectBook}
+            onSelectAuthor={handleSelectAuthor}
             onAddToCart={addToCart}
             onBuyNow={handleBuyNow}
             onPreviewSample={(b) => setPreviewBook(b)}
@@ -511,7 +640,11 @@ export default function App() {
         }}
       />
 
-      <PdfPreviewModal book={previewBook} onClose={() => setPreviewBook(null)} />
+      <PdfPreviewModal
+        book={previewBook}
+        onClose={() => setPreviewBook(null)}
+        onAddToCart={(b) => addToCart(b, 1)}
+      />
 
       <WhatsAppInquiryModal
         book={whatsAppBook}

@@ -83,6 +83,33 @@ export const bookUpload = multer({
   },
 });
 
+const leadershipStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    ensureStorageDirectories();
+    cb(null, COVERS_DIR);
+  },
+  filename: (_req, file, cb) => {
+    const id = crypto.randomUUID();
+    const ext = IMAGE_MIME_EXT[file.mimetype] || '.jpg';
+    cb(null, `leadership_${id}${ext}`);
+  },
+});
+
+export const leadershipPhotoUpload = multer({
+  storage: leadershipStorage,
+  limits: {
+    fileSize: 15 * 1024 * 1024, // 15MB max
+    files: 1,
+  },
+  fileFilter: (_req, file, cb) => {
+    if (IMAGE_MIME_EXT[file.mimetype]) {
+      cb(null, true);
+    } else {
+      cb(new Error('Leadership portrait must be JPG, PNG, or WEBP'));
+    }
+  },
+});
+
 export function resolveSafeFilePath(directory: string, storedName: string): string | null {
   if (!storedName) return null;
   const safeBase = path.basename(storedName);
