@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -17,6 +18,8 @@ if (!fs.existsSync(dbDir)) {
 
 export const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
+db.pragma('busy_timeout = 5000');
 db.pragma('foreign_keys = ON');
 
 export function slugify(text: string): string {
@@ -198,7 +201,7 @@ export function initializeDatabase(): void {
       'Ph.D. · B.E. (Electrical & Industrial Engineering) · PG in ADR, Public Administration & Materials Management · ISO-9000 & High-Tension Electrical Certified',
     founder_bio:
       'Dr. S.B. Saraswat brings decades of international industrial leadership, institutional governance, and technical scholarship to Bhagwati Publications. He serves as Resident Director at Danieli Corus (Netherlands) and previously held senior executive appointments as Joint Director (Technical/Materials) at Steel Authority of India Limited (SAIL) and Director of Supply Chain Management at Global Steel Sofia (Europe).\n\nUnder his editorial stewardship, Bhagwati Publications advances rigorous academic, engineering, heritage, and management publishing for scholars, universities, and professional libraries.',
-    founder_photo_url: '',
+    founder_photo_url: '/assets/aistudio/images_117439bb.jpg',
   };
 
   const insertSetting = db.prepare(
@@ -208,14 +211,20 @@ export function initializeDatabase(): void {
     insertSetting.run(k, v);
   }
 
-  // Seed owner admin account if empty
+  // Seed owner admin account if empty (never hardcode a literal password in source)
   const adminCount = (db.prepare(`SELECT COUNT(*) as cnt FROM admin_users`).get() as { cnt: number }).cnt;
   if (adminCount === 0) {
-    const email = (process.env.ADMIN_EMAIL || 'owner@bhagwatipublications.com').toLowerCase();
-    const password = process.env.ADMIN_PASSWORD || 'BhagwatiAdmin@2026';
+    const email = (process.env.ADMIN_EMAIL || 'owner@bhagwatipublications.cv').toLowerCase();
+    const envPassword = process.env.ADMIN_PASSWORD?.trim();
+    const password = envPassword || crypto.randomBytes(12).toString('base64url');
     db.prepare(
       `INSERT INTO admin_users (email, password_hash, name) VALUES (?, ?, ?)`
     ).run(email, hashPassword(password), 'Publisher Owner');
+    if (!envPassword) {
+      console.warn(
+        `[Bootstrap] No ADMIN_PASSWORD set. Created initial admin (${email}) with temporary password: ${password}`
+      );
+    }
   }
 
   // Seed initial catalog categories & books if empty so storefront is immediately rich & interactive

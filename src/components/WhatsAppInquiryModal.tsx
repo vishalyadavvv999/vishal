@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircle2, ExternalLink, MessageSquare, X } from 'lucide-react';
 import type { Book, StoreConfig } from '../types';
 import { api } from '../lib/api';
@@ -21,6 +21,16 @@ export function WhatsAppInquiryModal({ book, storeConfig, onClose }: WhatsAppInq
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    if (book) {
+      setMessage(
+        `Hello Bhagwati Publications, I would like to inquire about "${book.title}" (ISBN: ${book.isbn}).`
+      );
+      setSubmitted(false);
+      setError('');
+    }
+  }, [book]);
 
   if (!book) return null;
 

@@ -19,6 +19,9 @@ export function LeadershipSection({ storeConfig }: LeadershipSectionProps) {
     storeConfig.founder_bio ||
     'Dr. S.B. Saraswat brings decades of international industrial leadership, institutional governance, and technical scholarship to Bhagwati Publications. He serves as Resident Director at Danieli Corus (Netherlands) and previously held senior executive appointments as Joint Director (Technical/Materials) at Steel Authority of India Limited (SAIL) and Director of Supply Chain Management at Global Steel Sofia (Europe).';
 
+  const photoUrl = storeConfig.founder_photo_url || '/assets/aistudio/images_117439bb.jpg';
+  const isOriginalMagazinePortrait = photoUrl === '/assets/aistudio/images_117439bb.jpg';
+
   const initials = founderName
     .replace(/^Dr\.?\s*/i, '')
     .split(/\s+/)
@@ -42,14 +45,18 @@ export function LeadershipSection({ storeConfig }: LeadershipSectionProps) {
         <div className="bg-white text-[#0B192C] rounded-lg border border-[#C59B27]/40 overflow-hidden grid grid-cols-1 lg:grid-cols-12 items-stretch">
           {/* Left Portrait Frame (Navy, Gold & Crisp Portrait Display) */}
           <div className="lg:col-span-5 bg-[#07111E] p-6 sm:p-8 flex flex-col items-center justify-center border-b lg:border-b-0 lg:border-r border-[#C59B27]/25">
-            <div className="w-full max-w-[340px] space-y-4">
+            <div className="w-full max-w-[320px] space-y-4">
               <div className="aspect-[4/5] w-full rounded-md overflow-hidden border border-[#C59B27]/60 bg-[#0B192C] relative flex items-center justify-center">
-                {storeConfig.founder_photo_url ? (
+                {photoUrl ? (
                   <img
-                    src={storeConfig.founder_photo_url}
+                    src={photoUrl}
                     alt={`${founderName}, ${founderDesignation}`}
                     referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover object-top"
+                    className={
+                      isOriginalMagazinePortrait
+                        ? 'absolute -left-[2.5%] -top-[21%] w-[167%] max-w-none h-auto select-none'
+                        : 'w-full h-full object-cover object-top'
+                    }
                   />
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-gradient-to-b from-[#0E2038] to-[#07111E] space-y-4">

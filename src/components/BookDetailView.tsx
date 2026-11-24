@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -7,6 +7,7 @@ import {
   MessageSquare,
   Minus,
   Plus,
+  Share2,
   ShoppingBag,
   Star,
   Zap,
@@ -56,6 +57,13 @@ export function BookDetailView({
   const { language, t } = useLanguage();
   const [quantity, setQuantity] = useState(1);
   const [addedFeedback, setAddedFeedback] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  useEffect(() => {
+    setQuantity(1);
+    setAddedFeedback(false);
+    setCopiedLink(false);
+  }, [book.id]);
 
   const isWishlisted = wishlistIds.has(book.id);
   const inStock = book.is_available && book.stock_quantity > 0;
@@ -67,11 +75,24 @@ export function BookDetailView({
     setTimeout(() => setAddedFeedback(false), 1800);
   };
 
+  const handleShareLink = async () => {
+    const shareUrl = `${window.location.origin}/books/${encodeURIComponent(book.slug)}`;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2200);
+      }
+    } catch {
+      // ignore clipboard permissions issues
+    }
+  };
+
   return (
     <div className="bg-[#F9FAFB] min-h-[75vh] py-10">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-14">
         {/* Back Breadcrumb & Language Toggle */}
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <button
             type="button"
             onClick={onBack}
@@ -80,7 +101,26 @@ export function BookDetailView({
             <ArrowLeft className="w-4 h-4" />
             <span>{t('backToCatalog')}</span>
           </button>
-          <LanguageToggle />
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleShareLink}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-medium text-[#0B192C] hover:bg-slate-50 transition-colors cursor-pointer"
+            >
+              {copiedLink ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>{language === 'hi' ? 'लिंक कॉपी किया गया' : 'Link Copied'}</span>
+                </>
+              ) : (
+                <>
+                  <Share2 className="w-3.5 h-3.5 text-[#9F7918]" />
+                  <span>{language === 'hi' ? 'साझा करें' : 'Share Edition'}</span>
+                </>
+              )}
+            </button>
+            <LanguageToggle />
+          </div>
         </div>
 
         {/* Contiguous PDP Layout: Sticky Gallery Left, Contiguous Purchase Module Right */}

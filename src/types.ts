@@ -63,6 +63,7 @@ export interface Book {
   is_published: boolean;
   average_rating?: number;
   review_count?: number;
+  units_sold?: number;
   created_at: string;
   updated_at?: string;
 }

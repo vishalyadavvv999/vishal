@@ -1,8 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   BookOpen,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  FolderOpen,
   Newspaper,
   Search,
   SlidersHorizontal,
@@ -22,6 +25,7 @@ import { LanguageToggle, useLanguage } from '../lib/i18n';
 import type { AppView } from './Navbar';
 import { BookCard } from './BookCard';
 import { LeadershipSection } from './LeadershipSection';
+import { RecommendedBooks } from './RecommendedBooks';
 
 interface HomeViewProps {
   viewMode: 'home' | 'catalog' | 'new-arrivals' | 'authors' | 'categories';
@@ -33,6 +37,8 @@ interface HomeViewProps {
   loading: boolean;
   currency: CurrencyCode;
   wishlistIds: Set<number>;
+  externalSearchQuery?: string;
+  externalSearchTrigger?: number;
   onToggleWishlist: (book: Book) => void;
   onNavigate: (view: AppView) => void;
   onSelectBook: (book: Book) => void;
@@ -51,6 +57,8 @@ export function HomeView({
   loading,
   currency,
   wishlistIds,
+  externalSearchQuery,
+  externalSearchTrigger,
   onToggleWishlist,
   onNavigate,
   onSelectBook,
@@ -59,7 +67,7 @@ export function HomeView({
   onPreviewSample,
 }: HomeViewProps) {
   const { language, t } = useLanguage();
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(externalSearchQuery || '');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedAuthor, setSelectedAuthor] = useState<string>('all');
   const [selectedLanguage, setSelectedLanguage] = useState<string>('all');
@@ -69,13 +77,51 @@ export function HomeView({
   const [inStockOnly, setInStockOnly] = useState<boolean>(false);
   const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
   const [sortBy, setSortBy] = useState<
-    'newest' | 'rating' | 'price_asc' | 'price_desc' | 'title'
+    'newest' | 'bestselling' | 'rating' | 'price_asc' | 'price_desc' | 'title'
   >('newest');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(6);
+
+  useEffect(() => {
+    if (!externalSearchTrigger) return;
+    setSearchQuery(externalSearchQuery || '');
+    setSelectedCategory('all');
+    setSelectedAuthor('all');
+    setSelectedLanguage('all');
+    setSelectedBinding('all');
+    setMinPrice('');
+    setMaxPrice('');
+    setInStockOnly(false);
+    setCurrentPage(1);
+  }, [externalSearchTrigger, externalSearchQuery]);
 
   const newReleaseBooks = useMemo(
-    () => books.filter((b) => b.is_new_arrival || b.is_featured).slice(0, 3),
+    () => books.filter((b) => b.is_new_arrival).slice(0, 3),
     [books]
   );
+
+  const featuredBooks = useMemo(
+    () => books.filter((b) => b.is_featured).slice(0, 3),
+    [books]
+  );
+
+  const hasOrderSales = useMemo(
+    () => books.some((b) => (b.units_sold || 0) > 0),
+    [books]
+  );
+
+  const bestSellerBooks = useMemo(() => {
+    const sorted = [...books].sort((a, b) => {
+      const salesDiff = (b.units_sold || 0) - (a.units_sold || 0);
+      if (salesDiff !== 0) return salesDiff;
+      const revDiff = (b.review_count || 0) - (a.review_count || 0);
+      if (revDiff !== 0) return revDiff;
+      const ratingDiff = (b.average_rating || 0) - (a.average_rating || 0);
+      if (ratingDiff !== 0) return ratingDiff;
+      return Number(b.is_featured) - Number(a.is_featured);
+    });
+    return sorted.slice(0, 3);
+  }, [books]);
 
   const availableLanguages = useMemo(() => {
     const set = new Set<string>();
@@ -193,6 +239,13 @@ export function HomeView({
     });
 
     list = [...list].sort((a, b) => {
+      if (sortBy === 'bestselling') {
+        const salesDiff = (b.units_sold || 0) - (a.units_sold || 0);
+        if (salesDiff !== 0) return salesDiff;
+        const ratingDiff = (b.average_rating || 0) - (a.average_rating || 0);
+        if (ratingDiff !== 0) return ratingDiff;
+        return (b.review_count || 0) - (a.review_count || 0);
+      }
       if (sortBy === 'rating') {
         const rDiff = (b.average_rating ?? 0) - (a.average_rating ?? 0);
         if (rDiff !== 0) return rDiff;
@@ -219,6 +272,37 @@ export function HomeView({
     sortBy,
   ]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [
+    viewMode,
+    searchQuery,
+    selectedCategory,
+    selectedAuthor,
+    selectedLanguage,
+    selectedBinding,
+    minPrice,
+    maxPrice,
+    inStockOnly,
+    sortBy,
+    pageSize,
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCatalogBooks.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedCatalogBooks = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredCatalogBooks.slice(start, start + pageSize);
+  }, [filteredCatalogBooks, safePage, pageSize]);
+
+  const handlePageChange = (nextPage: number) => {
+    setCurrentPage(nextPage);
+    const el = document.getElementById('catalog-section');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   const resetAllFilters = () => {
     setSearchQuery('');
     setSelectedCategory('all');
@@ -229,6 +313,7 @@ export function HomeView({
     setMaxPrice('');
     setInStockOnly(false);
     setSortBy('newest');
+    setCurrentPage(1);
   };
 
   const recentUpdates = useMemo(() => updates.slice(0, 3), [updates]);
@@ -357,6 +442,20 @@ export function HomeView({
                     <span>{t('aboutPoint4')}</span>
                   </div>
                 </div>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('about')}
+                    className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#0B192C] hover:text-[#9F7918] transition-colors cursor-pointer"
+                  >
+                    <span>
+                      {language === 'hi'
+                        ? 'हमारे बारे में और नेतृत्व परिचय देखें'
+                        : 'About Us & Leadership'}
+                    </span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -399,6 +498,124 @@ export function HomeView({
                 </div>
               </div>
             )}
+
+            {/* Featured Books Strip */}
+            {featuredBooks.length > 0 && (
+              <div className="space-y-7 pt-10 border-t border-slate-200">
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-[#9F7918]">
+                      {t('featuredEyebrow')}
+                    </p>
+                    <h2 className="font-serif text-2xl sm:text-3xl font-bold text-[#0B192C] mt-1">
+                      {t('featuredTitle')}
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('catalog')}
+                    className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#0B192C] hover:text-[#9F7918] transition-colors cursor-pointer self-start sm:self-auto"
+                  >
+                    <span>{t('heroExploreCatalog')}</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-7">
+                  {featuredBooks.map((book) => (
+                    <BookCard
+                      key={book.id}
+                      book={book}
+                      currency={currency}
+                      isWishlisted={wishlistIds.has(book.id)}
+                      onToggleWishlist={onToggleWishlist}
+                      onSelectBook={onSelectBook}
+                      onSelectAuthor={onSelectAuthor}
+                      onAddToCart={onAddToCart}
+                      onPreviewSample={onPreviewSample}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* Section 2A: Best Sellers & Recommended Books (Homepage) */}
+      {viewMode === 'home' && books.length > 0 && (
+        <section className="py-14 bg-[#F3F5F8] border-b border-slate-200">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+            {bestSellerBooks.length > 0 && (
+              <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-[#9F7918]">
+                      {t('bestSellersEyebrow')}
+                    </p>
+                    <h2 className="font-serif text-2xl sm:text-3xl font-bold text-[#0B192C] mt-1">
+                      {t('bestSellersTitle')}
+                    </h2>
+                    <p className="text-xs sm:text-sm text-slate-600 mt-1">
+                      {hasOrderSales
+                        ? language === 'hi'
+                          ? 'लाइव ग्राहक ऑर्डर और पाठक रेटिंग के आधार पर क्रमबद्ध।'
+                          : 'Ranked by verified customer orders and reader ratings.'
+                        : language === 'hi'
+                          ? 'पाठकों की रेटिंग और प्रमुख संस्करणों के आधार पर क्रमबद्ध (ऑर्डर प्राप्त होने पर बिक्री क्रम स्वतः अपडेट होता है)।'
+                          : 'Ranked by reader ratings and flagship editions (updates automatically as customer orders are placed).'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSortBy('bestselling');
+                      const el = document.getElementById('catalog-section');
+                      if (el) el.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#0B192C] hover:text-[#9F7918] transition-colors cursor-pointer self-start sm:self-auto"
+                  >
+                    <span>{t('sortBestselling')}</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-7">
+                  {bestSellerBooks.map((book) => (
+                    <BookCard
+                      key={book.id}
+                      book={book}
+                      currency={currency}
+                      isWishlisted={wishlistIds.has(book.id)}
+                      onToggleWishlist={onToggleWishlist}
+                      onSelectBook={onSelectBook}
+                      onSelectAuthor={onSelectAuthor}
+                      onAddToCart={onAddToCart}
+                      onPreviewSample={onPreviewSample}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <RecommendedBooks
+              allBooks={books}
+              referenceBooks={featuredBooks.length > 0 ? featuredBooks : books.slice(0, 2)}
+              excludeIds={[]}
+              title={t('recommendedTitle')}
+              subtitle={
+                language === 'hi'
+                  ? 'विषय, लेखक और पाठक रेटिंग के आधार पर आपके संग्रह के लिए चयनित।'
+                  : 'Curated from matching academic subjects, authors, and reader ratings across our catalog.'
+              }
+              currency={currency}
+              wishlistIds={wishlistIds}
+              onToggleWishlist={onToggleWishlist}
+              onSelectBook={onSelectBook}
+              onAddToCart={onAddToCart}
+              onPreviewSample={onPreviewSample}
+              onSelectAuthor={onSelectAuthor}
+            />
           </div>
         </section>
       )}
@@ -567,7 +784,74 @@ export function HomeView({
         </section>
       )}
 
-      {/* Section 3: Complete Searchable Book Catalogue with Advanced Filters */}
+      {/* Category Directory Cards (when visiting /categories) */}
+      {viewMode === 'categories' && categories.length > 0 && (
+        <section className="py-12 bg-white border-b border-slate-200">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-[#9F7918]">
+                {language === 'hi' ? 'प्रकाशन विषय' : 'Subject Disciplines'}
+              </p>
+              <h2 className="font-serif text-2xl font-bold text-[#0B192C] mt-1">
+                {t('browseCategoriesTitle')}
+              </h2>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              {categories.map((cat) => {
+                const active = selectedCategory === cat.slug;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedCategory(cat.slug);
+                      setSelectedAuthor('all');
+                      const el = document.getElementById('catalog-section');
+                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }}
+                    className={`text-left p-5 rounded-lg border transition-colors flex flex-col justify-between gap-4 cursor-pointer ${
+                      active
+                        ? 'bg-[#0B192C] text-white border-[#0B192C]'
+                        : 'bg-[#F9FAFB] text-[#0B192C] border-slate-200 hover:border-[#0B192C]/40'
+                    }`}
+                  >
+                    <div className="space-y-2">
+                      <FolderOpen
+                        className={`w-5 h-5 ${active ? 'text-[#DFC166]' : 'text-[#9F7918]'}`}
+                      />
+                      <h3 className="font-serif text-lg font-bold leading-snug">{cat.name}</h3>
+                      {cat.description && (
+                        <p
+                          className={`text-xs leading-relaxed line-clamp-3 ${
+                            active ? 'text-slate-300' : 'text-slate-600'
+                          }`}
+                        >
+                          {cat.description}
+                        </p>
+                      )}
+                    </div>
+                    <p
+                      className={`text-xs font-mono tabular-nums ${
+                        active ? 'text-[#DFC166]' : 'text-slate-500'
+                      }`}
+                    >
+                      {cat.book_count}{' '}
+                      {language === 'hi'
+                        ? 'पुस्तकें'
+                        : cat.book_count === 1
+                          ? 'Edition'
+                          : 'Editions'}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Section 3: Complete Searchable Book Catalogue with Advanced Filters & Pagination */}
       {viewMode !== 'authors' && (
         <section id="catalog-section" className="py-14 bg-[#F9FAFB]">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
@@ -579,11 +863,21 @@ export function HomeView({
                     : t('catalogTitle')}
                 </h2>
                 <p className="text-sm text-slate-600 mt-1 tabular-nums">
-                  {language === 'hi'
-                    ? `${filteredCatalogBooks.length} संस्करण प्रदर्शित`
-                    : `Showing ${filteredCatalogBooks.length} ${
-                        filteredCatalogBooks.length === 1 ? 'edition' : 'editions'
-                      }`}
+                  {filteredCatalogBooks.length === 0
+                    ? language === 'hi'
+                      ? '0 संस्करण प्रदर्शित'
+                      : 'Showing 0 editions'
+                    : language === 'hi'
+                      ? `${filteredCatalogBooks.length} में से ${(safePage - 1) * pageSize + 1}–${Math.min(
+                          safePage * pageSize,
+                          filteredCatalogBooks.length
+                        )} संस्करण`
+                      : `Showing ${(safePage - 1) * pageSize + 1}–${Math.min(
+                          safePage * pageSize,
+                          filteredCatalogBooks.length
+                        )} of ${filteredCatalogBooks.length} ${
+                          filteredCatalogBooks.length === 1 ? 'edition' : 'editions'
+                        }`}
                   {selectedAuthor !== 'all' ? ` · ${selectedAuthor}` : ''}
                 </p>
               </div>
@@ -628,6 +922,7 @@ export function HomeView({
                   className="px-3.5 py-2.5 bg-white border border-slate-300 rounded-md text-sm text-[#0B192C] focus:border-[#0B192C] focus:outline-none cursor-pointer"
                 >
                   <option value="newest">{t('sortNewest')}</option>
+                  <option value="bestselling">{t('sortBestselling')}</option>
                   <option value="rating">{t('sortRating')}</option>
                   <option value="price_asc">{t('sortPriceAsc')}</option>
                   <option value="price_desc">{t('sortPriceDesc')}</option>
@@ -812,20 +1107,89 @@ export function HomeView({
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-7">
-                {filteredCatalogBooks.map((book) => (
-                  <BookCard
-                    key={book.id}
-                    book={book}
-                    currency={currency}
-                    isWishlisted={wishlistIds.has(book.id)}
-                    onToggleWishlist={onToggleWishlist}
-                    onSelectBook={onSelectBook}
-                    onSelectAuthor={onSelectAuthor}
-                    onAddToCart={onAddToCart}
-                    onPreviewSample={onPreviewSample}
-                  />
-                ))}
+              <div className="space-y-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-7">
+                  {paginatedCatalogBooks.map((book) => (
+                    <BookCard
+                      key={book.id}
+                      book={book}
+                      currency={currency}
+                      isWishlisted={wishlistIds.has(book.id)}
+                      onToggleWishlist={onToggleWishlist}
+                      onSelectBook={onSelectBook}
+                      onSelectAuthor={onSelectAuthor}
+                      onAddToCart={onAddToCart}
+                      onPreviewSample={onPreviewSample}
+                    />
+                  ))}
+                </div>
+
+                {/* Catalog Pagination Controls */}
+                <nav
+                  aria-label="Catalog pagination"
+                  className="pt-6 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs"
+                >
+                  <div className="flex items-center gap-3 text-slate-600">
+                    <span className="tabular-nums">
+                      {language === 'hi'
+                        ? `पृष्ठ ${safePage} / ${totalPages}`
+                        : `Page ${safePage} of ${totalPages}`}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <label className="inline-flex items-center gap-1.5">
+                      <span>{t('perPage')}:</span>
+                      <select
+                        value={pageSize}
+                        onChange={(e) => setPageSize(Number(e.target.value))}
+                        aria-label="Books per page"
+                        className="px-2 py-1 bg-white border border-slate-300 rounded text-xs font-mono text-[#0B192C] cursor-pointer"
+                      >
+                        <option value={3}>3</option>
+                        <option value={6}>6</option>
+                        <option value={12}>12</option>
+                        <option value={24}>24</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={safePage <= 1}
+                      onClick={() => handlePageChange(safePage - 1)}
+                      className="inline-flex items-center gap-1 px-3 py-2 bg-white border border-slate-300 rounded-md font-semibold text-[#0B192C] hover:bg-slate-50 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      <span>{t('prevPage')}</span>
+                    </button>
+
+                    {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((pageNum) => (
+                      <button
+                        key={pageNum}
+                        type="button"
+                        onClick={() => handlePageChange(pageNum)}
+                        aria-current={pageNum === safePage ? 'page' : undefined}
+                        className={`w-8 h-8 rounded-md font-mono font-semibold tabular-nums border transition-colors cursor-pointer ${
+                          pageNum === safePage
+                            ? 'bg-[#0B192C] text-white border-[#0B192C]'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    ))}
+
+                    <button
+                      type="button"
+                      disabled={safePage >= totalPages}
+                      onClick={() => handlePageChange(safePage + 1)}
+                      className="inline-flex items-center gap-1 px-3 py-2 bg-white border border-slate-300 rounded-md font-semibold text-[#0B192C] hover:bg-slate-50 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      <span>{t('nextPage')}</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </nav>
               </div>
             )}
           </div>

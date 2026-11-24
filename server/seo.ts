@@ -17,6 +17,8 @@ interface SeoBookRow {
   stock_quantity: number;
   is_available: number;
   category_name: string | null;
+  average_rating: number;
+  review_count: number;
 }
 
 const DEFAULT_HERO_IMAGE = '/src/assets/images/hero_publishing_books_1794839640362.jpg';
@@ -98,10 +100,14 @@ export function injectSeoIntoHtml(
         `
         SELECT b.id, b.title, b.slug, b.author, b.isbn, b.description, b.price,
                b.cover_path, b.pages, b.language, b.binding, b.publication_year,
-               b.stock_quantity, b.is_available, c.name as category_name
+               b.stock_quantity, b.is_available, c.name as category_name,
+               COALESCE(ROUND(AVG(br.rating), 1), 0) as average_rating,
+               COUNT(br.id) as review_count
         FROM books b
         LEFT JOIN categories c ON c.id = b.category_id
+        LEFT JOIN book_reviews br ON br.book_id = b.id
         WHERE b.is_published = 1 AND ${isNumeric ? 'b.id = ?' : 'b.slug = ?'}
+        GROUP BY b.id
         `
       )
       .get(isNumeric ? Number(slugOrId) : slugOrId) as SeoBookRow | undefined;
@@ -155,12 +161,25 @@ export function injectSeoIntoHtml(
             : 'https://schema.org/OutOfStock',
           url: canonicalUrl,
         },
+        ...(book.review_count > 0 && book.average_rating > 0
+          ? {
+              aggregateRating: {
+                '@type': 'AggregateRating',
+                ratingValue: book.average_rating,
+                reviewCount: book.review_count,
+              },
+            }
+          : {}),
       };
     }
-  } else if (cleanPath === '/catalog' || cleanPath === '/categories') {
+  } else if (cleanPath === '/catalog') {
     title = `Book Catalog | ${publisherName}`;
     description =
       'Browse the complete Bhagwati Publications book catalog by subject, author, or ISBN-13, preview sample PDFs, and order direct editions.';
+  } else if (cleanPath === '/categories') {
+    title = `Browse by Category | ${publisherName}`;
+    description =
+      'Explore Bhagwati Publications books organized by academic, architectural, business, and literary subject categories.';
   } else if (cleanPath === '/new-releases') {
     title = `New Releases | ${publisherName}`;
     description =
@@ -189,6 +208,10 @@ export function injectSeoIntoHtml(
     title = `News & Publication Updates | ${publisherName}`;
     description =
       'Latest book releases, institutional course adoptions, and editorial announcements from Bhagwati Publications.';
+  } else if (cleanPath === '/about' || cleanPath === '/about-us') {
+    title = `About Us & Leadership | ${publisherName}`;
+    description =
+      'Learn about Bhagwati Publications, our editorial publishing standards, and our Director & Managing Head Dr. S.B. Saraswat.';
   } else if (cleanPath === '/wishlist') {
     title = `My Wishlist | ${publisherName}`;
     description =
@@ -268,7 +291,17 @@ export function injectSeoIntoHtml(
 
 export function buildSitemapXml(origin: string): string {
   const cleanOrigin = origin.replace(/\/+$/, '');
-  const staticPaths = ['/', '/catalog', '/new-releases', '/authors', '/updates', '/support', '/track-order'];
+  const staticPaths = [
+    '/',
+    '/about',
+    '/catalog',
+    '/categories',
+    '/new-releases',
+    '/authors',
+    '/updates',
+    '/support',
+    '/track-order',
+  ];
   const books = db
     .prepare(`SELECT slug, updated_at FROM books WHERE is_published = 1 ORDER BY id DESC`)
     .all() as Array<{ slug: string; updated_at: string }>;

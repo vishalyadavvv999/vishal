@@ -198,13 +198,17 @@ export function AdminSettingsTab({ settings, onUpdated }: AdminSettingsTabProps)
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
           {/* Portrait Uploader */}
           <div className="md:col-span-4 space-y-3">
-            <div className="aspect-[4/5] w-full max-w-[220px] rounded-md overflow-hidden border border-slate-300 bg-[#0B192C] flex items-center justify-center">
+            <div className="aspect-[4/5] w-full max-w-[220px] rounded-md overflow-hidden border border-slate-300 bg-[#0B192C] relative flex items-center justify-center">
               {founderPhotoUrl ? (
                 <img
                   src={founderPhotoUrl}
                   alt={founderName}
                   referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover object-top"
+                  className={
+                    founderPhotoUrl === '/assets/aistudio/images_117439bb.jpg'
+                      ? 'absolute -left-[2.5%] -top-[21%] w-[167%] max-w-none h-auto select-none'
+                      : 'w-full h-full object-cover object-top'
+                  }
                 />
               ) : (
                 <span className="text-xs text-slate-300 px-4 text-center">

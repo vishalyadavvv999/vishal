@@ -67,6 +67,15 @@ export function Footer({ storeConfig, onNavigate }: FooterProps) {
               <li>
                 <button
                   type="button"
+                  onClick={() => onNavigate('categories')}
+                  className="hover:text-white transition-colors cursor-pointer"
+                >
+                  {t('browseCategoriesTitle')}
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
                   onClick={() => onNavigate('new-arrivals')}
                   className="hover:text-white transition-colors cursor-pointer"
                 >
@@ -89,6 +98,15 @@ export function Footer({ storeConfig, onNavigate }: FooterProps) {
                   className="hover:text-white transition-colors cursor-pointer"
                 >
                   {t('updatesTitle')}
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('about')}
+                  className="hover:text-white transition-colors cursor-pointer"
+                >
+                  {t('navAbout')}
                 </button>
               </li>
               <li>

@@ -76,6 +76,7 @@ interface BookRow {
   author_slug?: string | null;
   average_rating?: number;
   review_count?: number;
+  units_sold?: number;
 }
 
 function getCoverUrl(coverPath: string): string {
@@ -110,6 +111,7 @@ function serializePublicBook(row: BookRow) {
     is_published: Boolean(row.is_published),
     average_rating: Number(row.average_rating || 0),
     review_count: Number(row.review_count || 0),
+    units_sold: Number(row.units_sold || 0),
     created_at: row.created_at,
   };
 }
@@ -257,7 +259,19 @@ function hydrateOrder(orderId: number) {
 // ============================================================================
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok' });
+  try {
+    db.prepare('SELECT 1').get();
+    res.json({
+      status: 'ok',
+      database: 'connected',
+      storage_ready:
+        fs.existsSync(COVERS_DIR) &&
+        fs.existsSync(SAMPLE_PDFS_DIR) &&
+        fs.existsSync(PRIVATE_PDFS_DIR),
+    });
+  } catch {
+    res.status(503).json({ status: 'error', database: 'unavailable' });
+  }
 });
 
 app.get('/api/store/config', (_req, res) => {
@@ -342,12 +356,21 @@ app.get('/api/books', (req, res) => {
   else if (sort === 'price_desc') orderBy = 'b.price DESC';
   else if (sort === 'title') orderBy = 'b.title ASC';
   else if (sort === 'rating') orderBy = 'average_rating DESC, review_count DESC, b.created_at DESC';
+  else if (sort === 'bestselling') {
+    orderBy = 'units_sold DESC, review_count DESC, average_rating DESC, b.created_at DESC';
+  }
 
   const sql = `
     SELECT b.*, c.name as category_name, c.slug as category_slug,
            a.slug as author_slug,
            COALESCE(ROUND(AVG(br.rating), 1), 0) as average_rating,
-           COUNT(br.id) as review_count
+           COUNT(br.id) as review_count,
+           COALESCE((
+             SELECT SUM(oi.quantity)
+             FROM order_items oi
+             JOIN orders o ON o.id = oi.order_id
+             WHERE oi.book_id = b.id AND o.order_status != 'cancelled'
+           ), 0) as units_sold
     FROM books b
     LEFT JOIN categories c ON c.id = b.category_id
     LEFT JOIN authors a ON LOWER(a.name) = LOWER(TRIM(b.author))
@@ -370,7 +393,13 @@ app.get('/api/books/:idOrSlug', (req, res) => {
       SELECT b.*, c.name as category_name, c.slug as category_slug,
              a.slug as author_slug,
              COALESCE(ROUND(AVG(br.rating), 1), 0) as average_rating,
-             COUNT(br.id) as review_count
+             COUNT(br.id) as review_count,
+             COALESCE((
+               SELECT SUM(oi.quantity)
+               FROM order_items oi
+               JOIN orders o ON o.id = oi.order_id
+               WHERE oi.book_id = b.id AND o.order_status != 'cancelled'
+             ), 0) as units_sold
       FROM books b
       LEFT JOIN categories c ON c.id = b.category_id
       LEFT JOIN authors a ON LOWER(a.name) = LOWER(TRIM(b.author))
@@ -556,7 +585,13 @@ app.get('/api/authors/:slug', (req, res) => {
       SELECT b.*, c.name as category_name, c.slug as category_slug,
              ? as author_slug,
              COALESCE(ROUND(AVG(br.rating), 1), 0) as average_rating,
-             COUNT(br.id) as review_count
+             COUNT(br.id) as review_count,
+             COALESCE((
+               SELECT SUM(oi.quantity)
+               FROM order_items oi
+               JOIN orders o ON o.id = oi.order_id
+               WHERE oi.book_id = b.id AND o.order_status != 'cancelled'
+             ), 0) as units_sold
       FROM books b
       LEFT JOIN categories c ON c.id = b.category_id
       LEFT JOIN book_reviews br ON br.book_id = b.id
@@ -684,7 +719,29 @@ app.post('/api/orders', (req, res) => {
     return;
   }
 
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.customer_email.trim())) {
+    res.status(400).json({ error: 'Please enter a valid email address for order confirmation.' });
+    return;
+  }
+
+  const phoneDigits = body.customer_phone.replace(/[^\d]/g, '');
+  if (phoneDigits.length < 7) {
+    res.status(400).json({ error: 'Please enter a valid contact phone number.' });
+    return;
+  }
+
   const store = getPublicStoreConfig();
+  const allowedMethods = new Set<string>();
+  if (store.payment_cod_enabled) allowedMethods.add('cod');
+  if (store.payment_upi_enabled) allowedMethods.add('upi');
+  if (store.payment_gateway_provider !== 'none' && store.payment_gateway_public_key) {
+    allowedMethods.add(`gateway_${store.payment_gateway_provider}`);
+  }
+  if (allowedMethods.size === 0) allowedMethods.add('cod');
+  const requestedMethod = (body.payment_method || 'cod').trim();
+  const paymentMethod = allowedMethods.has(requestedMethod)
+    ? requestedMethod
+    : Array.from(allowedMethods)[0];
 
   const createTx = db.transaction(() => {
     let subtotal = 0;
@@ -774,7 +831,7 @@ app.post('/api/orders', (req, res) => {
         body.city!.trim(),
         body.state!.trim(),
         body.postal_code!.trim(),
-        (body.payment_method || 'cod').trim(),
+        paymentMethod,
         (body.payment_reference || '').trim(),
         subtotal,
         shippingFee,
@@ -867,6 +924,10 @@ app.post('/api/inquiries', (req, res) => {
 
   if (!body.name?.trim() || !body.email?.trim() || !body.subject?.trim() || !body.message?.trim()) {
     res.status(400).json({ error: 'Name, email, subject, and message are required.' });
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())) {
+    res.status(400).json({ error: 'Please provide a valid email address so we can reply.' });
     return;
   }
 
@@ -1551,18 +1612,29 @@ app.put('/api/admin/books/:id', requireAdmin, uploadBookFields, (req, res) => {
       deleteStoredFile(COVERS_DIR, existing.cover_path);
     }
     coverPath = files.cover[0].filename;
+  } else if (body.remove_cover === 'true') {
+    if (existing.cover_path && !existing.cover_path.startsWith('/src/assets/')) {
+      deleteStoredFile(COVERS_DIR, existing.cover_path);
+    }
+    coverPath = '';
   }
 
   let samplePdfPath = existing.sample_pdf_path;
   if (files?.sample_pdf?.[0]) {
     deleteStoredFile(SAMPLE_PDFS_DIR, existing.sample_pdf_path);
     samplePdfPath = files.sample_pdf[0].filename;
+  } else if (body.remove_sample_pdf === 'true') {
+    deleteStoredFile(SAMPLE_PDFS_DIR, existing.sample_pdf_path);
+    samplePdfPath = '';
   }
 
   let privatePdfPath = existing.private_pdf_path;
   if (files?.private_pdf?.[0]) {
     deleteStoredFile(PRIVATE_PDFS_DIR, existing.private_pdf_path);
     privatePdfPath = files.private_pdf[0].filename;
+  } else if (body.remove_private_pdf === 'true') {
+    deleteStoredFile(PRIVATE_PDFS_DIR, existing.private_pdf_path);
+    privatePdfPath = '';
   }
 
   db.prepare(
@@ -2244,15 +2316,34 @@ async function startServer() {
     const distDir = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distDir, { index: false }));
     app.get('*', (req, res) => {
+      if (req.originalUrl.startsWith('/api/')) {
+        res.status(404).json({ error: 'API endpoint not found' });
+        return;
+      }
       const indexHtml = fs.readFileSync(path.join(distDir, 'index.html'), 'utf8');
       const withSeo = injectSeoIntoHtml(indexHtml, req.originalUrl, resolveOrigin(req));
       res.status(200).set({ 'Content-Type': 'text/html' }).end(withSeo);
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Bhagwati Publications server listening on http://0.0.0.0:${PORT}`);
   });
+
+  const shutdown = (signal: string) => {
+    console.log(`Received ${signal}, closing HTTP server and flushing SQLite database...`);
+    server.close(() => {
+      try {
+        db.close();
+      } catch {
+        // ignore already closed
+      }
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 startServer();

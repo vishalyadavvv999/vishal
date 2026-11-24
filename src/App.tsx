@@ -14,6 +14,7 @@ import { applySeoMetadata } from './lib/seo';
 import { Navbar, type AppView } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { HomeView } from './components/HomeView';
+import { AboutView } from './components/AboutView';
 import { BookDetailView } from './components/BookDetailView';
 import { AuthorProfileView } from './components/AuthorProfileView';
 import { UpdatesView } from './components/UpdatesView';
@@ -48,7 +49,7 @@ const DEFAULT_STORE_CONFIG: StoreConfig = {
     'Ph.D. · B.E. (Electrical & Industrial Engineering) · PG in ADR, Public Administration & Materials Management · ISO-9000 & High-Tension Electrical Certified',
   founder_bio:
     'Dr. S.B. Saraswat brings decades of international industrial leadership, institutional governance, and technical scholarship to Bhagwati Publications. He serves as Resident Director at Danieli Corus (Netherlands) and previously held senior executive appointments as Joint Director (Technical/Materials) at Steel Authority of India Limited (SAIL) and Director of Supply Chain Management at Global Steel Sofia (Europe).\n\nUnder his editorial stewardship, Bhagwati Publications advances rigorous academic, engineering, heritage, and management publishing for scholars, universities, and professional libraries.',
-  founder_photo_url: '',
+  founder_photo_url: '/assets/aistudio/images_117439bb.jpg',
 };
 
 const CART_STORAGE_KEY = 'bhagwati_publications_cart_v1';
@@ -60,6 +61,7 @@ const VIEW_TO_PATH: Record<Exclude<AppView, 'book' | 'author'>, string> = {
   'new-arrivals': '/new-releases',
   authors: '/authors',
   updates: '/updates',
+  about: '/about',
   wishlist: '/wishlist',
   categories: '/categories',
   support: '/support',
@@ -87,6 +89,9 @@ function parseRouteFromLocation(): {
   if (path === '/authors') return { view: 'authors', bookSlugOrId: null, authorSlug: null };
   if (path === '/updates' || path.startsWith('/updates/')) {
     return { view: 'updates', bookSlugOrId: null, authorSlug: null };
+  }
+  if (path === '/about' || path === '/about-us') {
+    return { view: 'about', bookSlugOrId: null, authorSlug: null };
   }
   if (path === '/wishlist') return { view: 'wishlist', bookSlugOrId: null, authorSlug: null };
   if (path === '/categories') return { view: 'categories', bookSlugOrId: null, authorSlug: null };
@@ -140,6 +145,11 @@ export default function App() {
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [previewBook, setPreviewBook] = useState<Book | null>(null);
   const [whatsAppBook, setWhatsAppBook] = useState<Book | null>(null);
+  const [prefillOrderNumber, setPrefillOrderNumber] = useState('');
+  const [globalSearch, setGlobalSearch] = useState<{ query: string; trigger: number }>({
+    query: '',
+    trigger: 0,
+  });
 
   // Admin auth state
   const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
@@ -310,7 +320,8 @@ export default function App() {
     }
   }, [cart]);
 
-  const handleNavigate = (view: AppView) => {
+  const navigateToView = (view: AppView) => {
+    setPrefillOrderNumber('');
     setCurrentView(view);
     if (view !== 'book' && view !== 'author') {
       setSelectedBook(null);
@@ -326,6 +337,11 @@ export default function App() {
       checkAdminSession();
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleNavigate = (view: AppView) => {
+    setGlobalSearch({ query: '', trigger: 0 });
+    navigateToView(view);
   };
 
   const handleSelectBook = async (book: Book) => {
@@ -375,6 +391,11 @@ export default function App() {
     } finally {
       setLoadingAuthor(false);
     }
+  };
+
+  const handleGlobalSearchSubmit = (query: string) => {
+    setGlobalSearch((prev) => ({ query, trigger: prev.trigger + 1 }));
+    navigateToView('catalog');
   };
 
   const addToCart = (book: Book, quantity = 1) => {
@@ -483,7 +504,13 @@ export default function App() {
         currentView={currentView}
         cartCount={cartCount}
         wishlistCount={wishlist.length}
+        books={books}
+        authors={authors}
+        currency={storeConfig.currency}
         onNavigate={handleNavigate}
+        onSelectBook={handleSelectBook}
+        onSelectAuthor={handleSelectAuthor}
+        onSubmitGlobalSearch={handleGlobalSearchSubmit}
         onOpenCart={() => setCartOpen(true)}
       />
 
@@ -503,6 +530,8 @@ export default function App() {
             loading={loadingCatalog}
             currency={storeConfig.currency}
             wishlistIds={wishlistIds}
+            externalSearchQuery={globalSearch.query}
+            externalSearchTrigger={globalSearch.trigger}
             onToggleWishlist={toggleWishlist}
             onNavigate={handleNavigate}
             onSelectBook={handleSelectBook}
@@ -536,6 +565,10 @@ export default function App() {
           />
         )}
 
+        {currentView === 'about' && (
+          <AboutView storeConfig={storeConfig} onNavigate={handleNavigate} />
+        )}
+
         {currentView === 'wishlist' && (
           <WishlistView
             books={wishlist}
@@ -555,6 +588,7 @@ export default function App() {
 
         {currentView === 'book' && selectedBook && (
           <BookDetailView
+            key={selectedBook.id}
             book={selectedBook}
             allBooks={books}
             currency={storeConfig.currency}
@@ -583,7 +617,11 @@ export default function App() {
         )}
 
         {currentView === 'support' && (
-          <SupportView books={books} storeConfig={storeConfig} />
+          <SupportView
+            books={books}
+            storeConfig={storeConfig}
+            initialOrderNumber={prefillOrderNumber}
+          />
         )}
 
         {currentView === 'admin' && (
@@ -629,16 +667,22 @@ export default function App() {
         }}
       />
 
-      <CheckoutModal
-        open={checkoutOpen}
-        items={cart}
-        storeConfig={storeConfig}
-        onClose={() => setCheckoutOpen(false)}
-        onOrderSuccess={() => {
-          setCart([]);
-          loadStorefront();
-        }}
-      />
+      {checkoutOpen && (
+        <CheckoutModal
+          open={checkoutOpen}
+          items={cart}
+          storeConfig={storeConfig}
+          onClose={() => setCheckoutOpen(false)}
+          onOrderSuccess={() => {
+            setCart([]);
+            loadStorefront();
+          }}
+          onTrackOrder={(orderNum) => {
+            handleNavigate('support');
+            setPrefillOrderNumber(orderNum);
+          }}
+        />
+      )}
 
       <PdfPreviewModal
         book={previewBook}
@@ -646,11 +690,14 @@ export default function App() {
         onAddToCart={(b) => addToCart(b, 1)}
       />
 
-      <WhatsAppInquiryModal
-        book={whatsAppBook}
-        storeConfig={storeConfig}
-        onClose={() => setWhatsAppBook(null)}
-      />
+      {whatsAppBook && (
+        <WhatsAppInquiryModal
+          key={whatsAppBook.id}
+          book={whatsAppBook}
+          storeConfig={storeConfig}
+          onClose={() => setWhatsAppBook(null)}
+        />
+      )}
 
       {customerAuthOpen && (
         <CustomerAuthModal

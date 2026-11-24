@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Check,
   CheckCircle2,
@@ -21,6 +21,7 @@ import { LanguageToggle, useLanguage } from '../lib/i18n';
 interface SupportViewProps {
   books: Book[];
   storeConfig: StoreConfig;
+  initialOrderNumber?: string;
 }
 
 const ORDER_STEPS: Array<{ key: OrderStatus; en: string; hi: string }> = [
@@ -30,7 +31,7 @@ const ORDER_STEPS: Array<{ key: OrderStatus; en: string; hi: string }> = [
   { key: 'delivered', en: 'Delivered', hi: 'वितरित' },
 ];
 
-export function SupportView({ books, storeConfig }: SupportViewProps) {
+export function SupportView({ books, storeConfig, initialOrderNumber = '' }: SupportViewProps) {
   const { language, t } = useLanguage();
 
   // Contact Form State
@@ -45,11 +46,17 @@ export function SupportView({ books, storeConfig }: SupportViewProps) {
   const [inquirySuccess, setInquirySuccess] = useState(false);
 
   // Order Lookup State
-  const [orderNumber, setOrderNumber] = useState('');
+  const [orderNumber, setOrderNumber] = useState(initialOrderNumber);
   const [lookupContact, setLookupContact] = useState('');
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState('');
   const [foundOrder, setFoundOrder] = useState<Order | null>(null);
+
+  useEffect(() => {
+    if (initialOrderNumber) {
+      setOrderNumber(initialOrderNumber);
+    }
+  }, [initialOrderNumber]);
 
   const sanitizedWhatsapp = storeConfig.whatsapp_number.replace(/[^\d]/g, '');
 

@@ -124,6 +124,15 @@ export function applySeoMetadata(params: {
           : 'https://schema.org/OutOfStock',
         url: canonicalUrl,
       },
+      ...((book.review_count || 0) > 0 && (book.average_rating || 0) > 0
+        ? {
+            aggregateRating: {
+              '@type': 'AggregateRating',
+              ratingValue: book.average_rating,
+              reviewCount: book.review_count,
+            },
+          }
+        : {}),
     });
     return;
   }
@@ -173,10 +182,14 @@ export function applySeoMetadata(params: {
   let pageDesc =
     'Explore verified editions, read sample PDFs, and order books directly from Bhagwati Publications—an independent publishing house.';
 
-  if (params.view === 'catalog' || params.view === 'categories') {
+  if (params.view === 'catalog') {
     pageTitle = `Book Catalog | ${publisherName}`;
     pageDesc =
       'Browse the complete Bhagwati Publications book catalog by subject, author, or ISBN-13, preview sample PDFs, and order direct editions.';
+  } else if (params.view === 'categories') {
+    pageTitle = `Browse by Category | ${publisherName}`;
+    pageDesc =
+      'Explore Bhagwati Publications books organized by academic, architectural, business, and literary subject categories.';
   } else if (params.view === 'new-arrivals') {
     pageTitle = `New Releases | ${publisherName}`;
     pageDesc =
@@ -189,6 +202,10 @@ export function applySeoMetadata(params: {
     pageTitle = `News & Publication Updates | ${publisherName}`;
     pageDesc =
       'Official publishing announcements, new print releases, and academic press dispatches from Bhagwati Publications.';
+  } else if (params.view === 'about') {
+    pageTitle = `About Us & Leadership | ${publisherName}`;
+    pageDesc =
+      'Learn about Bhagwati Publications, our editorial publishing standards, and our Director & Managing Head Dr. S.B. Saraswat.';
   } else if (params.view === 'wishlist') {
     pageTitle = `My Wishlist | ${publisherName}`;
     pageDesc =

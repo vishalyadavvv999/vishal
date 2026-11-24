@@ -6,7 +6,9 @@ import type { NextFunction, Request, Response } from 'express';
 export const ADMIN_COOKIE_NAME = 'bp_admin_session';
 export const CUSTOMER_COOKIE_NAME = 'bp_customer_session';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+const DATA_DIR = process.env.DATABASE_PATH
+  ? path.dirname(path.resolve(process.cwd(), process.env.DATABASE_PATH))
+  : path.resolve(process.cwd(), 'data');
 const SECRET_FILE = path.join(DATA_DIR, '.session_secret');
 
 function getSessionSecret(): string {

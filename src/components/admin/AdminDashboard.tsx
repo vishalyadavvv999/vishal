@@ -15,6 +15,7 @@ import {
   Search,
   Settings,
   Trash2,
+  X,
 } from 'lucide-react';
 import type {
   AdminOverview,
@@ -60,6 +61,7 @@ export function AdminDashboard({
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -127,6 +129,8 @@ export function AdminDashboard({
     book: Book,
     patch: Partial<{ stock_quantity: number; is_available: boolean; is_published: boolean }>
   ) => {
+    setError('');
+    setNotice('');
     try {
       await api.adminUpdateBookInventory(book.id, {
         stock_quantity: patch.stock_quantity ?? book.stock_quantity,
@@ -135,17 +139,21 @@ export function AdminDashboard({
       });
       await loadAllAdminData();
       onStorefrontDataChanged();
+      setNotice(`Updated inventory for "${book.title}".`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update inventory');
     }
   };
 
   const handleDeleteBook = async (id: number) => {
+    setError('');
+    setNotice('');
     try {
       await api.adminDeleteBook(id);
       setConfirmDeleteBookId(null);
       await loadAllAdminData();
       onStorefrontDataChanged();
+      setNotice('Book removed from catalog.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete book');
     }
@@ -154,6 +162,8 @@ export function AdminDashboard({
   const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCategoryName.trim()) return;
+    setError('');
+    setNotice('');
     try {
       await api.adminCreateCategory({
         name: newCategoryName.trim(),
@@ -163,12 +173,15 @@ export function AdminDashboard({
       setNewCategoryDesc('');
       await loadAllAdminData();
       onStorefrontDataChanged();
+      setNotice('Category created.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create category');
     }
   };
 
   const handleUpdateCategory = async (id: number) => {
+    setError('');
+    setNotice('');
     try {
       await api.adminUpdateCategory(id, {
         name: editingCatName.trim(),
@@ -177,16 +190,20 @@ export function AdminDashboard({
       setEditingCatId(null);
       await loadAllAdminData();
       onStorefrontDataChanged();
+      setNotice('Category updated.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update category');
     }
   };
 
   const handleDeleteCategory = async (id: number) => {
+    setError('');
+    setNotice('');
     try {
       await api.adminDeleteCategory(id);
       await loadAllAdminData();
       onStorefrontDataChanged();
+      setNotice('Category deleted.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete category');
     }
@@ -196,21 +213,27 @@ export function AdminDashboard({
     orderId: number,
     patch: { order_status?: OrderStatus; payment_status?: PaymentStatus }
   ) => {
+    setError('');
+    setNotice('');
     try {
       await api.adminUpdateOrder(orderId, patch);
       await loadAllAdminData();
+      setNotice('Order status updated.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update order');
     }
   };
 
   const handleInquiryUpdate = async (id: number, status: InquiryStatus) => {
+    setError('');
+    setNotice('');
     try {
       await api.adminUpdateInquiry(id, {
         status,
         admin_notes: inquiryNotes[id] || '',
       });
       await loadAllAdminData();
+      setNotice('Inquiry updated.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update inquiry');
     }
@@ -323,8 +346,30 @@ export function AdminDashboard({
         {/* Viewport Body */}
         <div className="p-6 space-y-6 flex-1">
           {error && (
-            <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 text-sm rounded-md">
-              {error}
+            <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 text-sm rounded-md flex items-center justify-between gap-3">
+              <span>{error}</span>
+              <button
+                type="button"
+                onClick={() => setError('')}
+                aria-label="Dismiss error"
+                className="text-rose-700 hover:text-rose-900 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {notice && (
+            <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm rounded-md flex items-center justify-between gap-3">
+              <span>{notice}</span>
+              <button
+                type="button"
+                onClick={() => setNotice('')}
+                aria-label="Dismiss notice"
+                className="text-emerald-700 hover:text-emerald-900 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           )}
 
@@ -582,13 +627,22 @@ export function AdminDashboard({
                                   </button>
 
                                   {confirmDeleteBookId === book.id ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteBook(book.id)}
-                                      className="px-2 py-1 bg-rose-700 text-white text-[11px] font-semibold rounded cursor-pointer"
-                                    >
-                                      Confirm
-                                    </button>
+                                    <div className="inline-flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteBook(book.id)}
+                                        className="px-2 py-1 bg-rose-700 text-white text-[11px] font-semibold rounded cursor-pointer"
+                                      >
+                                        Confirm
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmDeleteBookId(null)}
+                                        className="px-2 py-1 border border-slate-300 text-slate-700 text-[11px] font-medium rounded hover:bg-slate-100 cursor-pointer"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
                                   ) : (
                                     <button
                                       type="button"
@@ -973,10 +1027,12 @@ export function AdminDashboard({
             setEditingBook(null);
           }}
           onSaved={async () => {
+            const wasEditing = Boolean(editingBook);
             setBookModalOpen(false);
             setEditingBook(null);
             await loadAllAdminData();
             onStorefrontDataChanged();
+            setNotice(wasEditing ? 'Book details updated.' : 'New book published.');
           }}
         />
       )}

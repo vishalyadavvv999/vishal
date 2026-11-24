@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 
 interface BookCoverImageProps {
@@ -10,6 +10,10 @@ interface BookCoverImageProps {
 
 export function BookCoverImage({ src, title, author, className = '' }: BookCoverImageProps) {
   const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [src]);
 
   if (!src || hasError) {
     return (

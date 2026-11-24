@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { FileCheck2, Lock, Upload, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { FileCheck2, Lock, Trash2, Upload, X } from 'lucide-react';
 import type { Book, Category } from '../../types';
 import { api } from '../../lib/api';
 
@@ -43,11 +43,30 @@ export function AdminBookModal({
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [samplePdfFile, setSamplePdfFile] = useState<File | null>(null);
   const [privatePdfFile, setPrivatePdfFile] = useState<File | null>(null);
+  const [removeCover, setRemoveCover] = useState(false);
+  const [removeSamplePdf, setRemoveSamplePdf] = useState(false);
+  const [removePrivatePdf, setRemovePrivatePdf] = useState(false);
+  const [coverObjectUrl, setCoverObjectUrl] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    if (!coverFile) {
+      setCoverObjectUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(coverFile);
+    setCoverObjectUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [coverFile]);
+
   if (!open) return null;
+
+  const activeCoverPreview =
+    coverObjectUrl || (!removeCover && editingBook?.cover_url ? editingBook.cover_url : null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,8 +92,13 @@ export function AdminBookModal({
       formData.append('is_published', String(isPublished));
 
       if (coverFile) formData.append('cover', coverFile);
+      else if (removeCover) formData.append('remove_cover', 'true');
+
       if (samplePdfFile) formData.append('sample_pdf', samplePdfFile);
+      else if (removeSamplePdf) formData.append('remove_sample_pdf', 'true');
+
       if (privatePdfFile) formData.append('private_pdf', privatePdfFile);
+      else if (removePrivatePdf) formData.append('remove_private_pdf', 'true');
 
       if (editingBook) {
         await api.adminUpdateBook(editingBook.id, formData);
@@ -260,32 +284,67 @@ export function AdminBookModal({
 
           {/* Secure File Uploads */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-200">
-            <div className="p-3.5 border border-slate-200 rounded-md bg-slate-50 space-y-2">
+            <div className="p-3.5 border border-slate-200 rounded-md bg-slate-50 space-y-2.5">
               <label className="block text-xs font-semibold text-[#0B192C]">
-                Cover Image (JPG/PNG/WEBP)
+                Cover Image (JPG/PNG/WEBP, max 5MB)
               </label>
+              {activeCoverPreview && (
+                <div className="flex items-start gap-2.5">
+                  <img
+                    src={activeCoverPreview}
+                    alt="Cover preview"
+                    className="w-14 aspect-[3/4] object-cover rounded border border-slate-200 bg-white shrink-0"
+                  />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <p className="text-[11px] text-slate-600 truncate">
+                      {coverFile ? coverFile.name : 'Current cover'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (coverFile) {
+                          setCoverFile(null);
+                        } else {
+                          setRemoveCover(true);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-700 hover:underline cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>{coverFile ? 'Clear selected' : 'Remove cover'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
               <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer">
                 <Upload className="w-3.5 h-3.5" />
                 <span>{coverFile ? 'Change Image' : 'Choose Cover'}</span>
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
-                  onChange={(e) => setCoverFile(e.target.files?.[0] || null)}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    if (file && file.size > 5 * 1024 * 1024) {
+                      setError('Cover image must be 5 MB or smaller.');
+                      return;
+                    }
+                    setError('');
+                    setCoverFile(file);
+                    if (file) setRemoveCover(false);
+                  }}
                   className="hidden"
                 />
               </label>
-              <p className="text-[11px] text-slate-500 truncate">
-                {coverFile
-                  ? coverFile.name
-                  : editingBook?.cover_url
-                    ? 'Existing cover retained'
-                    : 'Optional'}
-              </p>
+              {!activeCoverPreview && (
+                <p className="text-[11px] text-slate-500 truncate">
+                  {removeCover ? 'Existing cover will be removed' : 'Optional (Max 5MB)'}
+                </p>
+              )}
             </div>
 
-            <div className="p-3.5 border border-slate-200 rounded-md bg-slate-50 space-y-2">
+            <div className="p-3.5 border border-slate-200 rounded-md bg-slate-50 space-y-2.5">
               <label className="block text-xs font-semibold text-[#0B192C]">
-                Public Sample PDF
+                Public Sample PDF (max 25MB)
               </label>
               <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer">
                 <FileCheck2 className="w-3.5 h-3.5" />
@@ -293,23 +352,47 @@ export function AdminBookModal({
                 <input
                   type="file"
                   accept="application/pdf"
-                  onChange={(e) => setSamplePdfFile(e.target.files?.[0] || null)}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    if (file && file.size > 25 * 1024 * 1024) {
+                      setError('Sample PDF must be 25 MB or smaller.');
+                      return;
+                    }
+                    setError('');
+                    setSamplePdfFile(file);
+                    if (file) setRemoveSamplePdf(false);
+                  }}
                   className="hidden"
                 />
               </label>
               <p className="text-[11px] text-slate-500 truncate">
                 {samplePdfFile
                   ? samplePdfFile.name
-                  : editingBook?.has_sample_pdf
-                    ? 'Sample PDF uploaded'
-                    : 'Publicly previewable'}
+                  : removeSamplePdf
+                    ? 'Sample PDF will be removed'
+                    : editingBook?.has_sample_pdf
+                      ? 'Sample PDF uploaded'
+                      : 'Publicly previewable'}
               </p>
+              {(samplePdfFile || (editingBook?.has_sample_pdf && !removeSamplePdf)) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (samplePdfFile) setSamplePdfFile(null);
+                    else setRemoveSamplePdf(true);
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-700 hover:underline cursor-pointer"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span>{samplePdfFile ? 'Clear selected' : 'Remove sample PDF'}</span>
+                </button>
+              )}
             </div>
 
-            <div className="p-3.5 border border-slate-200 rounded-md bg-slate-50 space-y-2">
+            <div className="p-3.5 border border-slate-200 rounded-md bg-slate-50 space-y-2.5">
               <label className="flex items-center gap-1 text-xs font-semibold text-[#0B192C]">
                 <Lock className="w-3.5 h-3.5 text-[#9F7918]" />
-                <span>Private Full PDF</span>
+                <span>Private Full PDF (max 25MB)</span>
               </label>
               <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer">
                 <Upload className="w-3.5 h-3.5" />
@@ -317,17 +400,41 @@ export function AdminBookModal({
                 <input
                   type="file"
                   accept="application/pdf"
-                  onChange={(e) => setPrivatePdfFile(e.target.files?.[0] || null)}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    if (file && file.size > 25 * 1024 * 1024) {
+                      setError('Private PDF must be 25 MB or smaller.');
+                      return;
+                    }
+                    setError('');
+                    setPrivatePdfFile(file);
+                    if (file) setRemovePrivatePdf(false);
+                  }}
                   className="hidden"
                 />
               </label>
               <p className="text-[11px] text-slate-500 truncate">
                 {privatePdfFile
                   ? privatePdfFile.name
-                  : editingBook?.has_private_pdf
-                    ? 'Private PDF stored securely'
-                    : 'Never exposed publicly'}
+                  : removePrivatePdf
+                    ? 'Private PDF will be removed'
+                    : editingBook?.has_private_pdf
+                      ? 'Private PDF stored securely'
+                      : 'Never exposed publicly'}
               </p>
+              {(privatePdfFile || (editingBook?.has_private_pdf && !removePrivatePdf)) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (privatePdfFile) setPrivatePdfFile(null);
+                    else setRemovePrivatePdf(true);
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-700 hover:underline cursor-pointer"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span>{privatePdfFile ? 'Clear selected' : 'Remove private PDF'}</span>
+                </button>
+              )}
             </div>
           </div>
 

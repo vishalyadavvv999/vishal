@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { CheckCircle2, CreditCard, Lock, ShieldCheck, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, CreditCard, Lock, PackageSearch, ShieldCheck, X } from 'lucide-react';
 import type { CartItem, Order, StoreConfig } from '../types';
 import { formatPrice } from '../lib/currency';
 import { api } from '../lib/api';
@@ -10,6 +10,7 @@ interface CheckoutModalProps {
   storeConfig: StoreConfig;
   onClose: () => void;
   onOrderSuccess: (order: Order) => void;
+  onTrackOrder?: (orderNumber: string) => void;
 }
 
 export function CheckoutModal({
@@ -18,6 +19,7 @@ export function CheckoutModal({
   storeConfig,
   onClose,
   onOrderSuccess,
+  onTrackOrder,
 }: CheckoutModalProps) {
   const paymentOptions = useMemo(() => {
     const opts: Array<{ id: string; label: string; description: string }> = [];
@@ -46,8 +48,8 @@ export function CheckoutModal({
         storeConfig.payment_gateway_provider.slice(1);
       opts.push({
         id: `gateway_${storeConfig.payment_gateway_provider}`,
-        label: `Online Payment (${providerTitle})`,
-        description: `Configured ${storeConfig.payment_gateway_mode.toUpperCase()} gateway integration.`,
+        label: `Online Payment Request (${providerTitle})`,
+        description: `Records your order as pending ${providerTitle} verification (${storeConfig.payment_gateway_mode.toUpperCase()} mode). Live card capture requires server webhook activation.`,
       });
     }
     if (opts.length === 0) {
@@ -73,6 +75,12 @@ export function CheckoutModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [confirmedOrder, setConfirmedOrder] = useState<Order | null>(null);
+
+  useEffect(() => {
+    if (paymentOptions.length > 0 && !paymentOptions.some((o) => o.id === paymentMethod)) {
+      setPaymentMethod(paymentOptions[0].id);
+    }
+  }, [paymentOptions, paymentMethod]);
 
   if (!open) return null;
 
@@ -214,7 +222,22 @@ export function CheckoutModal({
               </div>
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              {onTrackOrder && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ordNum = confirmedOrder.order_number;
+                    setConfirmedOrder(null);
+                    onClose();
+                    onTrackOrder(ordNum);
+                  }}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 border border-[#0B192C] text-[#0B192C] text-sm font-semibold rounded-md hover:bg-slate-50 cursor-pointer"
+                >
+                  <PackageSearch className="w-4 h-4 text-[#9F7918]" />
+                  <span>Track This Order</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
